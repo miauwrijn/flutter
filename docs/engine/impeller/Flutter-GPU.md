@@ -14,6 +14,10 @@ There is also an experimental 3D rendering package powered by Flutter GPU called
 
 Flutter GPU is a low level API for building rendering packages from scratch. Graphics programming has a steep learning curve, and it's likely that most users will opt to use a higher level rendering package rather than build their own.
 
+## Compute
+
+Flutter GPU runs compute shaders on Metal, Vulkan and OpenGL ES 3.1. See [Compute in Flutter GPU](Flutter-GPU-Compute.md) for device support, writing and bundling compute shaders, and the synchronization and readback guarantees.
+
 ## Distribution
 
 Flutter GPU can be used on the Flutter [master channel](https://docs.flutter.dev/release/upgrade#other-channels).

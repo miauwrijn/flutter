@@ -1,0 +1,32 @@
+// Copyright 2013 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// Lays out 16 particles in a 4x4 grid, writing each one's color and offset
+// into an instance buffer that an instanced draw reads directly.
+
+layout(local_size_x = 16) in;
+
+layout(std430) buffer;
+
+struct Particle {
+  vec4 color;
+  vec2 offset;
+  vec2 padding;
+};
+
+layout(binding = 0) writeonly buffer Particles {
+  Particle particles[];
+}
+particles;
+
+void main() {
+  uint index = gl_GlobalInvocationID.x;
+  float column = float(index % 4u);
+  float row = float(index / 4u);
+  particles.particles[index].offset =
+      vec2(column * 0.5 - 0.75, row * 0.5 - 0.75);
+  particles.particles[index].color =
+      vec4(column / 3.0, row / 3.0, 1.0 - float(index) / 15.0, 1.0);
+  particles.particles[index].padding = vec2(0.0);
+}

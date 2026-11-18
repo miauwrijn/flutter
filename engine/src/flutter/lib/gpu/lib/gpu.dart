@@ -18,6 +18,9 @@
 /// See also:
 ///
 ///  * [Flutter GPU documentation](https://github.com/flutter/flutter/blob/main/docs/engine/impeller/Flutter-GPU.md).
+///  * [Compute in Flutter GPU](https://github.com/flutter/flutter/blob/main/docs/engine/impeller/Flutter-GPU-Compute.md),
+///    for [ComputePass], storage buffers and textures, indirect dispatch and
+///    draws, and reading results back with [CommandBuffer.readBuffer].
 library flutter_gpu;
 
 import 'dart:async';

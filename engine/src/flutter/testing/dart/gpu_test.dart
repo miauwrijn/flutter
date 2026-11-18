@@ -4335,4 +4335,96 @@ void main() async {
     );
     await submitAndWait(state.commandBuffer);
   }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('A compute pass writes particles that an instanced draw renders', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    const particleCount = 16;
+    // Each particle is a vec4 color, a vec2 offset and padding, in std430.
+    const particleStride = 32;
+    final gpu.ComputePipeline particles = await createComputePipeline('ComputeParticles');
+    final gpu.StorageBufferSlot particlesSlot = particles.shader.getStorageBufferSlot('Particles');
+    expect(particlesSlot.runtimeArrayStrideInBytes, particleStride);
+    final gpu.DeviceBuffer instances = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      particleCount * particleStride,
+    );
+
+    final gpu.Texture target = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      100,
+      100,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(particles);
+    computePass.bindStorageBuffer(particlesSlot, wholeBuffer(instances));
+    computePass.dispatch(1);
+
+    final gpu.ShaderLibrary library = (await gpu.ShaderLibrary.fromAsset('test.shaderbundle'))!;
+    final gpu.RenderPipeline pipeline = gpu.gpuContext.createRenderPipeline(
+      library['InstancedVertex']!,
+      library['InstancedFragment']!,
+      vertexLayout: const gpu.VertexLayout(
+        buffers: <gpu.VertexBuffer>[
+          gpu.VertexBuffer(
+            strideInBytes: 8,
+            attributes: <gpu.VertexAttribute>[
+              gpu.VertexAttribute(name: 'position', format: gpu.VertexFormat.float32x2),
+            ],
+          ),
+          gpu.VertexBuffer(
+            strideInBytes: particleStride,
+            stepMode: gpu.VertexStepMode.instance,
+            attributes: <gpu.VertexAttribute>[
+              gpu.VertexAttribute(name: 'instance_color', format: gpu.VertexFormat.float32x4),
+              gpu.VertexAttribute(
+                name: 'instance_offset',
+                offsetInBytes: 16,
+                format: gpu.VertexFormat.float32x2,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    final gpu.RenderPass renderPass = commandBuffer.createRenderPass(
+      gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: target, clearValue: Colors.black)),
+    );
+    renderPass.bindPipeline(pipeline);
+    final gpu.HostBuffer transients = gpu.gpuContext.createHostBuffer();
+    renderPass.bindVertexBuffer(
+      transients.emplace(
+        float32(<double>[
+          -0.18, 0.18, //
+          0.0, -0.18, //
+          0.18, 0.18, //
+        ]),
+      ),
+    );
+    // The compute pass's output is the instance buffer, without a copy.
+    renderPass.bindVertexBuffer(wholeBuffer(instances), slot: 1);
+    renderPass.bindUniform(
+      pipeline.vertexShader.getUniformSlot('VertInfo'),
+      transients.emplace(mvpUBO(Matrix4.identity())),
+    );
+    renderPass.draw(3, instanceCount: particleCount);
+    final Future<ByteData> pixels = commandBuffer.readTexture(gpu.TextureRegion(target));
+    await submitAndWait(commandBuffer);
+
+    // Every grid cell holds a particle, and the gaps between them stay clear.
+    final ByteData bytes = await pixels;
+    int pixel(int x, int y) => bytes.getUint32((y * 100 + x) * 4);
+    const int clear = 0x000000FF;
+    for (final int y in <int>[12, 37, 62, 87]) {
+      for (final int x in <int>[12, 37, 62, 87]) {
+        expect(pixel(x, y), isNot(clear), reason: 'particle at ($x, $y)');
+      }
+      expect(pixel(25, y), clear, reason: 'gap at (25, $y)');
+      expect(pixel(50, y), clear, reason: 'gap at (50, $y)');
+    }
+
+    await comparer.addGoldenImage(target.asImage(), 'flutter_gpu_test_compute_particles.png');
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
 }
