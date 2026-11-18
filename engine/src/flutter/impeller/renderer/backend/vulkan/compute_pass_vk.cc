@@ -4,6 +4,8 @@
 
 #include "impeller/renderer/backend/vulkan/compute_pass_vk.h"
 
+#include <algorithm>
+
 #include <vector>
 
 #include "flutter/fml/closure.h"
@@ -176,6 +178,13 @@ absl::Status ComputePassVK::Compute(std::array<uint32_t, 3> workgroup_count) {
                         "No compute pipeline is bound.");
   }
 
+  // Layout transitions are recorded outside of the dispatch, before the
+  // memory barrier below, which orders the dispatch after them.
+  if (!TransitionStorageTextures()) {
+    return absl::InternalError(
+        "Could not move a storage texture to the general layout.");
+  }
+
   if (descriptor_set_dirty_) {
     if (absl::Status status = BindDescriptorSet(); !status.ok()) {
       return status;
@@ -231,15 +240,31 @@ bool ComputePassVK::BindResource(ShaderStage stage,
                                  const ShaderMetadata* metadata,
                                  std::shared_ptr<const Texture> texture,
                                  raw_ptr<const Sampler> sampler) {
-  if (!texture || !texture->IsValid() || !sampler) {
+  if (!texture || !texture->IsValid()) {
     return false;
   }
   const TextureVK& texture_vk = TextureVK::Cast(*texture);
-  const SamplerVK& sampler_vk = SamplerVK::Cast(*sampler);
 
   if (!command_buffer_->Track(texture)) {
     return false;
   }
+
+  if (type == DescriptorType::kStorageImage) {
+    // Storage images are read and written without a sampler, in the general
+    // layout. The view must not swizzle, so use the plain image view.
+    vk::DescriptorImageInfo image_info;
+    image_info.imageLayout = vk::ImageLayout::eGeneral;
+    image_info.imageView = texture_vk.GetImageView();
+    bindings_[static_cast<uint32_t>(slot.binding)] = {
+        .type = type, .image_info = image_info, .storage_texture = texture};
+    descriptor_set_dirty_ = true;
+    return true;
+  }
+
+  if (!sampler) {
+    return false;
+  }
+  const SamplerVK& sampler_vk = SamplerVK::Cast(*sampler);
 
   vk::DescriptorImageInfo image_info;
   image_info.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
@@ -276,6 +301,45 @@ bool ComputePassVK::BindResource(size_t binding,
   bindings_[static_cast<uint32_t>(binding)] = {.type = type,
                                                .buffer_info = buffer_info};
   descriptor_set_dirty_ = true;
+  return true;
+}
+
+bool ComputePassVK::TransitionStorageTextures() {
+  for (const DescriptorSetLayout& layout :
+       pipeline_->GetDescriptor().GetDescriptorSetLayouts()) {
+    if (layout.descriptor_type != DescriptorType::kStorageImage) {
+      continue;
+    }
+    auto found = bindings_.find(layout.binding);
+    if (found == bindings_.end() || !found->second.storage_texture) {
+      continue;
+    }
+    const std::shared_ptr<const Texture>& texture =
+        found->second.storage_texture;
+    const TextureVK& texture_vk = TextureVK::Cast(*texture);
+    if (texture_vk.GetLayout() == vk::ImageLayout::eGeneral) {
+      continue;
+    }
+    BarrierVK barrier;
+    barrier.cmd_buffer = command_buffer_->GetCommandBuffer();
+    barrier.new_layout = vk::ImageLayout::eGeneral;
+    // Wait for earlier render, blit and compute work on the image, and for
+    // its earlier reads, before changing its layout.
+    barrier.src_stage =
+        kGraphicsAndTransferStages | vk::PipelineStageFlagBits::eComputeShader;
+    barrier.src_access =
+        kGraphicsAndTransferWrites | vk::AccessFlagBits::eShaderWrite;
+    barrier.dst_stage = vk::PipelineStageFlagBits::eComputeShader;
+    barrier.dst_access =
+        vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+    if (!texture_vk.SetLayout(barrier)) {
+      return false;
+    }
+    if (std::find(storage_textures_.begin(), storage_textures_.end(),
+                  texture) == storage_textures_.end()) {
+      storage_textures_.push_back(texture);
+    }
+  }
   return true;
 }
 
@@ -327,6 +391,27 @@ bool ComputePassVK::EncodeCommands() const {
           vk::AccessFlagBits::eUniformRead | vk::AccessFlagBits::eShaderRead |
           vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eTransferRead |
           vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eHostRead);
+
+  // Later passes sample textures, and copy from them, starting from the
+  // shader-read layout. The barrier above already made the pass's writes
+  // available, so these transitions only need to wait for the compute stage.
+  for (const std::shared_ptr<const Texture>& texture : storage_textures_) {
+    BarrierVK barrier;
+    barrier.cmd_buffer = command_buffer_->GetCommandBuffer();
+    barrier.new_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    barrier.src_stage = vk::PipelineStageFlagBits::eComputeShader;
+    barrier.src_access = vk::AccessFlagBits::eShaderWrite;
+    barrier.dst_stage = vk::PipelineStageFlagBits::eVertexShader |
+                        vk::PipelineStageFlagBits::eFragmentShader |
+                        vk::PipelineStageFlagBits::eComputeShader |
+                        vk::PipelineStageFlagBits::eTransfer;
+    barrier.dst_access =
+        vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite |
+        vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite;
+    if (!TextureVK::Cast(*texture).SetLayout(barrier)) {
+      return false;
+    }
+  }
   return true;
 }
 

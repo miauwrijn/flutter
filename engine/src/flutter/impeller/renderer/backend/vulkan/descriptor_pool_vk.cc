@@ -14,6 +14,7 @@ struct DescriptorPoolSize {
   size_t buffer_bindings;
   size_t texture_bindings;
   size_t storage_bindings;
+  size_t storage_image_bindings;
   size_t subpass_bindings;
 };
 
@@ -23,7 +24,8 @@ static const constexpr DescriptorPoolSize kDefaultBindingSize =
         .buffer_bindings = 512u,   // Buffer Bindings
         .texture_bindings = 256u,  // Texture Bindings
         .storage_bindings = 32,
-        .subpass_bindings = 4u  // Subpass Bindings
+        .storage_image_bindings = 32u,  // Compute storage textures
+        .subpass_bindings = 4u          // Subpass Bindings
 };
 
 DescriptorPoolVK::DescriptorPoolVK(std::weak_ptr<const ContextVK> context)
@@ -156,12 +158,15 @@ vk::UniqueDescriptorPool DescriptorPoolRecyclerVK::Create() {
                              kDefaultBindingSize.buffer_bindings},
       vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer,
                              kDefaultBindingSize.storage_bindings},
+      vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage,
+                             kDefaultBindingSize.storage_image_bindings},
       vk::DescriptorPoolSize{vk::DescriptorType::eInputAttachment,
                              kDefaultBindingSize.subpass_bindings}};
   vk::DescriptorPoolCreateInfo pool_info;
   pool_info.setMaxSets(kDefaultBindingSize.texture_bindings +
                        kDefaultBindingSize.buffer_bindings +
                        kDefaultBindingSize.storage_bindings +
+                       kDefaultBindingSize.storage_image_bindings +
                        kDefaultBindingSize.subpass_bindings);
   pool_info.setPoolSizes(pools);
   auto [result, pool] =

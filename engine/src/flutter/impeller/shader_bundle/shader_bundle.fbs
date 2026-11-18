@@ -8,7 +8,7 @@ namespace impeller.fb.shaderbundle;
 // incremented any time there is a change to this file which changes the
 // resulting flat buffer format.
 enum ShaderBundleFormatVersion:uint32 {
-  kVersion = 3
+  kVersion = 4
 }
 
 enum ShaderStage:byte {
@@ -125,6 +125,34 @@ table ShaderStorageBuffer {
   runtime_array_stride: uint64;
 }
 
+// The texel format a storage texture declares with its layout qualifier, such
+// as `layout(rgba8)`.
+enum ShaderStorageTextureFormat:byte {
+  kUnknown,
+  kRGBA8,
+  kRGBA16F,
+  kRGBA32F,
+  kR32F,
+}
+
+// A storage texture (an `image2D`) that a compute shader declares.
+table ShaderStorageTexture {
+  // The name of the image.
+  name: string;
+  // The backend's index for the texture: the Metal texture index, or the
+  // binding on Vulkan and OpenGL ES. impeller::kOptimizedOutBinding if the
+  // backend compiler removed the texture because the shader never uses it.
+  ext_res_0: uint64;
+  // The descriptor set the shader declares the texture in.
+  set: uint64;
+  // The binding the shader declares the texture at.
+  binding: uint64;
+  // How the shader accesses the texture.
+  access: ShaderResourceAccess;
+  // The texel format the shader declares for the texture.
+  format: ShaderStorageTextureFormat;
+}
+
 // The workgroup size a compute shader declares with `local_size`.
 struct WorkgroupSize {
   x: uint32;
@@ -143,6 +171,8 @@ table BackendShader {
   storage_buffers: [ShaderStorageBuffer];
   // Present for compute shaders only.
   workgroup_size: WorkgroupSize;
+  // The storage textures a compute shader declares. Empty for other stages.
+  storage_textures: [ShaderStorageTexture];
 }
 
 table Shader {

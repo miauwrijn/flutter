@@ -69,6 +69,23 @@ static impeller::ShaderStage ToShaderStage(
   FML_UNREACHABLE();
 }
 
+static impeller::PixelFormat ToStorageTexturePixelFormat(
+    impeller::fb::shaderbundle::ShaderStorageTextureFormat format) {
+  switch (format) {
+    case impeller::fb::shaderbundle::ShaderStorageTextureFormat::kRGBA8:
+      return impeller::PixelFormat::kR8G8B8A8UNormInt;
+    case impeller::fb::shaderbundle::ShaderStorageTextureFormat::kRGBA16F:
+      return impeller::PixelFormat::kR16G16B16A16Float;
+    case impeller::fb::shaderbundle::ShaderStorageTextureFormat::kRGBA32F:
+      return impeller::PixelFormat::kR32G32B32A32Float;
+    case impeller::fb::shaderbundle::ShaderStorageTextureFormat::kR32F:
+      return impeller::PixelFormat::kR32Float;
+    case impeller::fb::shaderbundle::ShaderStorageTextureFormat::kUnknown:
+      return impeller::PixelFormat::kUnknown;
+  }
+  return impeller::PixelFormat::kUnknown;
+}
+
 static Shader::StorageBufferBinding::Access ToStorageBufferAccess(
     impeller::fb::shaderbundle::ShaderResourceAccess access) {
   switch (access) {
@@ -395,6 +412,46 @@ static ShaderLibrary::ShaderMap ParseShaderBundle(
       }
     }
 
+    absl::flat_hash_map<std::string, Shader::StorageTextureBinding>
+        storage_textures;
+    if (backend_shader->storage_textures() != nullptr) {
+      for (const auto& storage_texture : *backend_shader->storage_textures()) {
+        if (storage_texture->name() == nullptr) {
+          continue;
+        }
+        if (!keep_optimized_out &&
+            storage_texture->ext_res_0() == impeller::kOptimizedOutBinding) {
+          continue;
+        }
+        storage_textures[storage_texture->name()->str()] =
+            Shader::StorageTextureBinding{
+                .slot =
+                    impeller::SampledImageSlot{
+                        .name = storage_texture->name()->c_str(),
+                        .texture_index =
+                            static_cast<size_t>(storage_texture->ext_res_0()),
+                        .set = static_cast<size_t>(storage_texture->set()),
+                        .binding =
+                            static_cast<size_t>(storage_texture->binding()),
+                    },
+                .metadata =
+                    impeller::ShaderMetadata{
+                        .name = storage_texture->name()->c_str(),
+                        .members = {},
+                    },
+                .access = ToStorageBufferAccess(storage_texture->access()),
+                .format =
+                    ToStorageTexturePixelFormat(storage_texture->format()),
+        };
+
+        descriptor_set_layouts.push_back(impeller::DescriptorSetLayout{
+            static_cast<uint32_t>(storage_texture->binding()),
+            impeller::DescriptorType::kStorageImage,
+            ToShaderStage(backend_shader->stage()),
+        });
+      }
+    }
+
     std::optional<std::array<uint32_t, 3>> workgroup_size;
     if (backend_shader->stage() ==
         impeller::fb::shaderbundle::ShaderStage::kCompute) {
@@ -443,7 +500,8 @@ static ShaderLibrary::ShaderMap ParseShaderBundle(
         ToShaderStage(backend_shader->stage()), std::move(code_mapping),
         std::move(inputs), std::move(layouts), std::move(uniform_structs),
         std::move(uniform_textures), std::move(descriptor_set_layouts),
-        std::move(storage_buffers), workgroup_size);
+        std::move(storage_buffers), workgroup_size,
+        std::move(storage_textures));
     shader_map[bundled_shader->name()->str()] = std::move(shader);
   }
 

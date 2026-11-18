@@ -186,6 +186,14 @@ class Capabilities {
   /// @brief The minimum alignment of storage buffer value offsets in bytes.
   virtual size_t GetMinimumStorageBufferAlignment() const;
 
+  /// @brief Whether a compute shader can bind a 2D texture of [format],
+  ///        created with the shader-write usage, as a storage texture.
+  ///
+  ///        The default answers for Metal: every uncompressed color format
+  ///        except sRGB, alpha-only and extended range ones, where compute is
+  ///        supported.
+  virtual bool SupportsShaderWriteFormat(PixelFormat format) const;
+
   /// @brief The limits the device places on compute workgroups and
   ///        dispatches. Every limit is zero if the backend does not support
   ///        compute.

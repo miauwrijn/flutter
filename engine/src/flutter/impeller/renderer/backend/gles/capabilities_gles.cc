@@ -523,6 +523,23 @@ ComputeLimits CapabilitiesGLES::GetComputeLimits() const {
   return compute_limits_;
 }
 
+bool CapabilitiesGLES::SupportsShaderWriteFormat(PixelFormat format) const {
+  if (!supports_compute_) {
+    return false;
+  }
+  // The formats OpenGL ES 3.1 binds as images that Impeller has pixel formats
+  // for. Textures in these formats get immutable storage, which images need.
+  switch (format) {
+    case PixelFormat::kR8G8B8A8UNormInt:
+    case PixelFormat::kR16G16B16A16Float:
+    case PixelFormat::kR32G32B32A32Float:
+    case PixelFormat::kR32Float:
+      return true;
+    default:
+      return false;
+  }
+}
+
 size_t CapabilitiesGLES::GetMinimumStorageBufferAlignment() const {
   // Uniforms and storage buffers share host buffers, so honor both.
   return std::max(GetMinimumUniformAlignment(),

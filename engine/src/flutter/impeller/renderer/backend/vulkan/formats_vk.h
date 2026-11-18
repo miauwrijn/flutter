@@ -321,6 +321,8 @@ static_assert(static_cast<int>(DescriptorType::kStorageBuffer) ==
               static_cast<int>(vk::DescriptorType::eStorageBuffer));
 static_assert(static_cast<int>(DescriptorType::kImage) ==
               static_cast<int>(vk::DescriptorType::eSampledImage));
+static_assert(static_cast<int>(DescriptorType::kStorageImage) ==
+              static_cast<int>(vk::DescriptorType::eStorageImage));
 static_assert(static_cast<int>(DescriptorType::kSampler) ==
               static_cast<int>(vk::DescriptorType::eSampler));
 static_assert(static_cast<int>(DescriptorType::kInputAttachment) ==

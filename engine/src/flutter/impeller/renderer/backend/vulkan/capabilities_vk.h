@@ -287,6 +287,9 @@ class CapabilitiesVK final : public Capabilities,
       CompressedTextureFamily family) const override;
 
   // |Capabilities|
+  bool SupportsShaderWriteFormat(PixelFormat format) const override;
+
+  // |Capabilities|
   bool SupportsFramebufferRenderMipmap() const override;
 
   // |Capabilities|
@@ -371,6 +374,9 @@ class CapabilitiesVK final : public Capabilities,
   bool has_primitive_restart_ = true;
   bool has_framebuffer_fetch_ = true;
   bool supports_external_fence_and_semaphore_ = false;
+  // The pixel formats the device can use as storage images with optimal
+  // tiling. Set by |SetPhysicalDevice|.
+  std::vector<PixelFormat> storage_image_formats_;
   bool supports_texture_compression_bc_ = false;
   bool supports_texture_compression_etc2_ = false;
   bool supports_texture_compression_astc_ = false;

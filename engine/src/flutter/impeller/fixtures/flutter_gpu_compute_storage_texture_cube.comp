@@ -1,0 +1,13 @@
+// Copyright 2013 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// Declares a cube storage image, which shader bundles do not support.
+
+layout(local_size_x = 1) in;
+
+layout(binding = 0, rgba8) uniform writeonly imageCube faces;
+
+void main() {
+  imageStore(faces, ivec3(0), vec4(1.0));
+}

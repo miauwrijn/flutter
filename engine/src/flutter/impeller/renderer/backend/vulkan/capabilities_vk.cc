@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "impeller/renderer/backend/vulkan/capabilities_vk.h"
+#include "impeller/renderer/backend/vulkan/formats_vk.h"
 
 #include <algorithm>
 #include <array>
@@ -593,6 +594,20 @@ bool CapabilitiesVK::SetPhysicalDevice(
   physical_device_ = device;
   device_properties_ = device.getProperties();
 
+  storage_image_formats_.clear();
+  for (PixelFormat format :
+       {PixelFormat::kR8UNormInt, PixelFormat::kR8G8UNormInt,
+        PixelFormat::kR8G8B8A8UNormInt, PixelFormat::kB8G8R8A8UNormInt,
+        PixelFormat::kR16G16B16A16Float, PixelFormat::kR32G32B32A32Float,
+        PixelFormat::kR32Float}) {
+    const vk::FormatProperties properties =
+        device.getFormatProperties(ToVKImageFormat(format));
+    if (properties.optimalTilingFeatures &
+        vk::FormatFeatureFlagBits::eStorageImage) {
+      storage_image_formats_.push_back(format);
+    }
+  }
+
   auto physical_properties_2 =
       device.getProperties2<vk::PhysicalDeviceProperties2,
                             vk::PhysicalDeviceSubgroupProperties>();
@@ -753,6 +768,12 @@ bool CapabilitiesVK::SupportsFramebufferFetch() const {
 }
 
 // |Capabilities|
+bool CapabilitiesVK::SupportsShaderWriteFormat(PixelFormat format) const {
+  return SupportsCompute() &&
+         std::find(storage_image_formats_.begin(), storage_image_formats_.end(),
+                   format) != storage_image_formats_.end();
+}
+
 bool CapabilitiesVK::SupportsCompute() const {
   // Vulkan 1.1 requires support for compute.
   return true;

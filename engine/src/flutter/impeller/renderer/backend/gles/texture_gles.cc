@@ -175,7 +175,65 @@ TextureGLES::TextureGLES(std::shared_ptr<ReactorGLES> reactor,
     return;
   }
 
+  // Compute shaders bind images with glBindImageTexture, which OpenGL ES
+  // allows only for immutable textures.
+  {
+    const auto& desc = GetTextureDescriptor();
+    const auto& gl = reactor_->GetProcTable();
+    uses_immutable_storage_ = !is_wrapped_ && type_ == Type::kTexture &&
+                              desc.type == TextureType::kTexture2D &&
+                              (desc.usage & TextureUsage::kShaderWrite) &&
+                              gl.TexStorage2D.IsAvailable() &&
+                              gl.GetCapabilities() &&
+                              gl.GetCapabilities()->SupportsCompute() &&
+                              ToStorageInternalFormat(desc.format).has_value();
+  }
   is_valid_ = true;
+}
+
+std::optional<GLenum> TextureGLES::ToStorageInternalFormat(PixelFormat format) {
+  switch (format) {
+    case PixelFormat::kR8G8B8A8UNormInt:
+      return GL_RGBA8;
+    case PixelFormat::kR16G16B16A16Float:
+      return GL_RGBA16F;
+    case PixelFormat::kR32G32B32A32Float:
+      return GL_RGBA32F;
+    case PixelFormat::kR32Float:
+      return GL_R32F;
+    default:
+      return std::nullopt;
+  }
+}
+
+bool TextureGLES::UsesImmutableStorage() const {
+  return uses_immutable_storage_;
+}
+
+void TextureGLES::AllocateImmutableStorageIfNecessary(
+    const ProcTableGLES& gl,
+    const TextureDescriptor& desc,
+    bool& allocated) {
+  if (allocated) {
+    return;
+  }
+  std::optional<GLenum> internal_format = ToStorageInternalFormat(desc.format);
+  if (!internal_format.has_value()) {
+    return;
+  }
+  gl.TexStorage2D(GL_TEXTURE_2D, std::max<GLsizei>(1, desc.mip_count),
+                  internal_format.value(), desc.size.width, desc.size.height);
+  allocated = true;
+}
+
+bool TextureGLES::EnsureImmutableStorage() {
+  if (!uses_immutable_storage_) {
+    return false;
+  }
+  if (!Bind()) {
+    return false;
+  }
+  return *immutable_storage_allocated_;
 }
 
 void TextureGLES::Leak() {
@@ -298,15 +356,18 @@ bool TextureGLES::OnSetContents(std::shared_ptr<const fml::Mapping> mapping,
   }
 
   ReactorGLES::Operation texture_upload =
-      [handle = handle_.Get(),                                   //
-       mapping,                                                  //
-       format = gles_format.value(),                             //
-       size = tex_descriptor.size,                               //
-       image_size = tex_descriptor.GetByteSizeOfBaseMipLevel(),  //
-       texture_type,                                             //
-       texture_target,                                           //
-       is_array,                                                 //
-       slice                                                     //
+      [handle = handle_.Get(),                                      //
+       mapping,                                                     //
+       format = gles_format.value(),                                //
+       size = tex_descriptor.size,                                  //
+       image_size = tex_descriptor.GetByteSizeOfBaseMipLevel(),     //
+       texture_type,                                                //
+       texture_target,                                              //
+       is_array,                                                    //
+       slice,                                                       //
+       uses_immutable_storage = uses_immutable_storage_,            //
+       immutable_storage_allocated = immutable_storage_allocated_,  //
+       desc = tex_descriptor                                        //
   ](const auto& reactor) {
         auto gl_handle = reactor.GetGLHandle(handle);
         if (!gl_handle.has_value()) {
@@ -364,6 +425,19 @@ bool TextureGLES::OnSetContents(std::shared_ptr<const fml::Mapping> mapping,
                                     0u,                      // border
                                     image_size,              // image size
                                     tex_data);               // data
+          } else if (uses_immutable_storage) {
+            // Immutable storage cannot be redefined, only filled.
+            AllocateImmutableStorageIfNecessary(gl, desc,
+                                                *immutable_storage_allocated);
+            gl.TexSubImage2D(texture_target,          // target
+                             0u,                      // LOD level
+                             0,                       // xoffset
+                             0,                       // yoffset
+                             size.width,              // width
+                             size.height,             // height
+                             format.external_format,  // format
+                             format.type,             // type
+                             tex_data);               // data
           } else {
             gl.TexImage2D(texture_target,          // target
                           0u,                      // LOD level
@@ -530,6 +604,12 @@ void TextureGLES::InitializeContentsIfNecessary() {
         // glTexImage3D allocated every layer of the base level at once, so a
         // single entry covers the whole level.
         MarkSliceMipLevelInitialized(0, 0);
+      } else if (uses_immutable_storage_) {
+        gl.BindTexture(GL_TEXTURE_2D, handle.value());
+        AllocateImmutableStorageIfNecessary(gl, desc,
+                                            *immutable_storage_allocated_);
+        // Immutable storage allocates every mip level at once.
+        MarkContentsInitialized();
       } else {
         // 2D / multisampled. External-OES textures are always wrapped, so
         // they returned at the is_wrapped_ check above. Only the base mip
@@ -724,6 +804,10 @@ bool TextureGLES::EnsureSliceMipLevelStorage(size_t slice, size_t mip_level) {
   // allocated at init; only sampled 2D and cube textures allocate per-level.
   if (type_ != Type::kTexture) {
     return true;
+  }
+  // Immutable storage allocates every level at once.
+  if (uses_immutable_storage_) {
+    return Bind();
   }
   auto handle = GetGLHandle();
   if (!handle.has_value()) {

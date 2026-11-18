@@ -68,6 +68,22 @@ class Shader : public RefCountedDartWrappable<Shader> {
     size_t runtime_array_stride = 0;
   };
 
+  /// A storage texture (an `image2D`) that a compute shader declares.
+  struct StorageTextureBinding {
+    using Access = StorageBufferBinding::Access;
+
+    /// Where the texture is bound on each backend: `texture_index` is the
+    /// Metal texture index, `binding` the Vulkan and OpenGL ES binding.
+    impeller::SampledImageSlot slot = {};
+    /// Names the texture. Compute passes also use its address to identify
+    /// the binding.
+    impeller::ShaderMetadata metadata;
+    Access access = Access::kReadWrite;
+    /// The texel format the shader declares for the texture. A bound texture
+    /// must have this format.
+    impeller::PixelFormat format = impeller::PixelFormat::kUnknown;
+  };
+
   ~Shader() override;
 
   static fml::RefPtr<Shader> Make(
@@ -82,7 +98,9 @@ class Shader : public RefCountedDartWrappable<Shader> {
       std::vector<impeller::DescriptorSetLayout> descriptor_set_layouts,
       absl::flat_hash_map<std::string, StorageBufferBinding> storage_buffers =
           {},
-      std::optional<std::array<uint32_t, 3>> workgroup_size = std::nullopt);
+      std::optional<std::array<uint32_t, 3>> workgroup_size = std::nullopt,
+      absl::flat_hash_map<std::string, StorageTextureBinding> storage_textures =
+          {});
 
   std::shared_ptr<const impeller::ShaderFunction> GetFunctionFromLibrary(
       impeller::ShaderLibrary& library);
@@ -164,6 +182,16 @@ class Shader : public RefCountedDartWrappable<Shader> {
   /// payload (`ResetFrom`), after which it must not be dereferenced.
   const Shader::StorageBufferBinding* GetStorageBufferAt(int index) const;
 
+  const Shader::StorageTextureBinding* GetStorageTexture(
+      const std::string& name) const;
+
+  /// The storage texture counterpart to `GetUniformStructIndex`.
+  int GetStorageTextureIndex(const std::string& name) const;
+
+  /// The storage texture counterpart to `GetStorageBufferAt`, with the same
+  /// lifetime.
+  const Shader::StorageTextureBinding* GetStorageTextureAt(int index) const;
+
  private:
   Shader();
 
@@ -180,6 +208,7 @@ class Shader : public RefCountedDartWrappable<Shader> {
   std::unordered_map<std::string, UniformBinding> uniform_structs_;
   std::unordered_map<std::string, TextureBinding> uniform_textures_;
   absl::flat_hash_map<std::string, StorageBufferBinding> storage_buffers_;
+  absl::flat_hash_map<std::string, StorageTextureBinding> storage_textures_;
   std::optional<std::array<uint32_t, 3>> workgroup_size_;
   // The maps' entries in a stable order for index-based lookup. The maps are
   // never modified after they are set, only replaced (`Make`, `ResetFrom`),
@@ -188,6 +217,7 @@ class Shader : public RefCountedDartWrappable<Shader> {
   std::vector<const UniformBinding*> uniform_struct_order_;
   std::vector<const TextureBinding*> uniform_texture_order_;
   std::vector<const StorageBufferBinding*> storage_buffer_order_;
+  std::vector<const StorageTextureBinding*> storage_texture_order_;
   std::vector<impeller::DescriptorSetLayout> descriptor_set_layouts_;
   bool is_dirty_ = true;
 
@@ -244,6 +274,23 @@ FLUTTER_GPU_EXPORT
 extern int InternalFlutterGpu_Shader_GetStorageBufferRuntimeArrayStrideAt(
     flutter::gpu::Shader* wrapper,
     int storage_buffer_index);
+
+FLUTTER_GPU_EXPORT
+extern int InternalFlutterGpu_Shader_GetStorageTextureIndex(
+    flutter::gpu::Shader* wrapper,
+    Dart_Handle storage_texture_name_handle);
+
+/// The `PixelFormat` index of the storage texture's declared format, or -1.
+FLUTTER_GPU_EXPORT
+extern int InternalFlutterGpu_Shader_GetStorageTextureFormatAt(
+    flutter::gpu::Shader* wrapper,
+    int storage_texture_index);
+
+/// 0 for read-write, 1 for read-only and 2 for write-only, or -1.
+FLUTTER_GPU_EXPORT
+extern int InternalFlutterGpu_Shader_GetStorageTextureAccessAt(
+    flutter::gpu::Shader* wrapper,
+    int storage_texture_index);
 
 // Test-only: exposes the per-shader dirty bit so tests can assert that
 // reload deduplication keeps unchanged shaders clean.

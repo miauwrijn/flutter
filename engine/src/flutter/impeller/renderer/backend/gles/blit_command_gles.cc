@@ -310,6 +310,15 @@ bool BlitCopyBufferToTextureCommandGLES::Encode(
   // snapshot pipeline (single base-level allocation followed by
   // glGenerateMipmap) keeps its existing GL footprint, and per-level uploads
   // pay only for the levels they touch.
+  // Immutable textures (shader-writable ones on OpenGL ES 3.1) allocate every
+  // level at once and cannot be redefined with glTexImage2D.
+  if (texture_gles.UsesImmutableStorage()) {
+    if (!texture_gles.EnsureImmutableStorage()) {
+      VALIDATION_LOG << "Could not allocate the texture's storage.";
+      return false;
+    }
+    gl.BindTexture(texture_type, gl_handle.value());
+  }
   if (!texture_gles.IsSliceMipLevelInitialized(slice, mip_level)) {
     const auto level_width =
         std::max<int32_t>(1, tex_descriptor.size.width >> mip_level);

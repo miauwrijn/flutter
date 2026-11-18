@@ -274,8 +274,13 @@ extern bool InternalFlutterGpu_Context_SupportsTextureFormat(
     return wrapper->GetContext().GetCapabilities()->SupportsTextureCompression(
         impeller::CompressedTextureFamilyForFormat(impeller_format));
   }
-  // For uncompressed formats, today's Impeller capability surface does not
-  // expose a per-format usage query, so this returns true. As that surface
-  // grows it should be wired in here.
+  // Shader write is what storage textures need, which varies by format and
+  // backend. Render-target and sampling support do not vary per format in
+  // today's capability surface.
+  if (shader_write &&
+      !wrapper->GetContext().GetCapabilities()->SupportsShaderWriteFormat(
+          impeller_format)) {
+    return false;
+  }
   return true;
 }

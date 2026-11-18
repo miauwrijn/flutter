@@ -229,6 +229,31 @@ base class ComputePass extends NativeFieldWrapperClass1
     }
   }
 
+  /// Binds [texture] to the storage texture [slot] for subsequent
+  /// dispatches. The shader reads and writes it with `imageLoad` and
+  /// `imageStore`, without a sampler.
+  ///
+  /// The texture must be a single-sampled 2D texture created with
+  /// `enableShaderWriteUsage`, in the [StorageTextureSlot.format] the shader
+  /// declares; use [GpuContext.supportsTextureFormat] with `shaderWrite` to
+  /// check that the device supports it. Throws an [ArgumentError] if it is
+  /// not, and a [StateError] if a hot reload removed the storage texture.
+  ///
+  /// Writes are visible to every later dispatch, pass, copy and readback,
+  /// including a [RenderPass] that samples the texture.
+  void bindStorageTexture(StorageTextureSlot slot, Texture texture) {
+    _checkNotEnded();
+    final int index = slot._checkedIndex;
+    final String? error = _bindStorageTextureIndexed(
+      slot.shader,
+      index,
+      texture,
+    );
+    if (error != null) {
+      throw ArgumentError(error);
+    }
+  }
+
   /// Binds the compute shader bindings in [bindingSet] for subsequent
   /// dispatches, replacing whatever set was bound to [slot].
   ///
@@ -253,8 +278,8 @@ base class ComputePass extends NativeFieldWrapperClass1
     _bindSet(bindingSet, slot);
   }
 
-  /// Unbinds every storage buffer, uniform, texture and binding set. The
-  /// bound pipeline stays bound.
+  /// Unbinds every storage buffer, storage texture, uniform, texture and
+  /// binding set. The bound pipeline stays bound.
   void clearBindings() {
     _checkNotEnded();
     _clearBindings();
@@ -391,6 +416,15 @@ base class ComputePass extends NativeFieldWrapperClass1
     int widthAddressMode,
     int heightAddressMode,
     int maxAnisotropy,
+  );
+
+  @Native<Handle Function(Pointer<Void>, Pointer<Void>, Int, Pointer<Void>)>(
+    symbol: 'InternalFlutterGpu_ComputePass_BindStorageTextureIndexed',
+  )
+  external String? _bindStorageTextureIndexed(
+    Shader shader,
+    int storageTextureIndex,
+    Texture texture,
   );
 
   @Native<Void Function(Pointer<Void>, Pointer<Void>, Int)>(

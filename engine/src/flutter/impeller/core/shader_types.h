@@ -392,6 +392,9 @@ enum class DescriptorType {
   kSampler = 0,
   kSampledImage = 1,
   kImage = 2,
+  /// A texture a compute shader reads or writes without a sampler, an
+  /// `image2D` in GLSL.
+  kStorageImage = 3,
   kUniformBuffer = 6,
   kStorageBuffer = 7,
   kInputAttachment = 10,

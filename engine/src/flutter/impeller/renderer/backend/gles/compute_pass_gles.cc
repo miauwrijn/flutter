@@ -11,6 +11,7 @@
 #include "impeller/base/validation.h"
 #include "impeller/renderer/backend/gles/buffer_bindings_gles.h"
 #include "impeller/renderer/backend/gles/compute_pipeline_gles.h"
+#include "impeller/renderer/backend/gles/texture_gles.h"
 #include "impeller/renderer/command.h"
 
 namespace impeller {
@@ -66,21 +67,28 @@ bool ComputePassGLES::BindResource(ShaderStage stage,
                                    const ShaderMetadata* metadata,
                                    std::shared_ptr<const Texture> texture,
                                    raw_ptr<const Sampler> sampler) {
-  if (stage != ShaderStage::kCompute || !metadata || !texture || !sampler) {
+  if (stage != ShaderStage::kCompute || !metadata || !texture) {
     return false;
   }
-  if (type != DescriptorType::kSampledImage) {
+  // Storage images are bound without a sampler.
+  if (type == DescriptorType::kSampledImage) {
+    if (!sampler) {
+      return false;
+    }
+  } else if (type != DescriptorType::kStorageImage) {
     return false;
   }
   for (TextureBinding& binding : textures_) {
     if (binding.metadata == metadata) {
+      binding.type = type;
       binding.slot = slot;
       binding.texture = std::move(texture);
       binding.sampler = sampler;
       return true;
     }
   }
-  textures_.push_back(TextureBinding{.slot = slot,
+  textures_.push_back(TextureBinding{.type = type,
+                                     .slot = slot,
                                      .metadata = metadata,
                                      .texture = std::move(texture),
                                      .sampler = sampler});
@@ -124,6 +132,33 @@ bool ComputePassGLES::EncodeCommands() const {
         }
       },
       /*defer=*/true);
+}
+
+bool ComputePassGLES::BindStorageTexture(const ProcTableGLES& gl,
+                                         const TextureBinding& binding) {
+  TextureGLES& texture =
+      const_cast<TextureGLES&>(TextureGLES::Cast(*binding.texture));
+  // glBindImageTexture takes only immutable textures, which shader-writable
+  // 2D textures are allocated as.
+  if (!texture.EnsureImmutableStorage()) {
+    VALIDATION_LOG << "The texture bound to the storage texture '"
+                   << binding.metadata->name
+                   << "' must be a 2D texture with the shader write usage, in "
+                      "a format compute shaders can write.";
+    return false;
+  }
+  std::optional<GLuint> handle = texture.GetGLHandle();
+  std::optional<GLenum> internal_format = TextureGLES::ToStorageInternalFormat(
+      texture.GetTextureDescriptor().format);
+  if (!handle.has_value() || !internal_format.has_value()) {
+    return false;
+  }
+  // The image unit is the binding the shader declares. Read-write access
+  // works for every access qualifier the shader may declare.
+  gl.BindImageTexture(static_cast<GLuint>(binding.slot.binding), handle.value(),
+                      /*level=*/0, /*layered=*/GL_FALSE,
+                      /*layer=*/0, GL_READ_WRITE, internal_format.value());
+  return true;
 }
 
 bool ComputePassGLES::EncodeDispatchesInReactor(
@@ -171,12 +206,22 @@ bool ComputePassGLES::EncodeDispatchesInReactor(
     std::vector<TextureAndSampler> textures;
     textures.reserve(dispatch.textures.size());
     for (const TextureBinding& binding : dispatch.textures) {
+      if (binding.type == DescriptorType::kStorageImage) {
+        if (!BindStorageTexture(gl, binding)) {
+          result = false;
+          break;
+        }
+        continue;
+      }
       textures.push_back(TextureAndSampler{
           .slot = binding.slot,
           .stage = ShaderStage::kCompute,
           .texture = TextureResource(binding.metadata, binding.texture),
           .sampler = binding.sampler,
       });
+    }
+    if (!result) {
+      break;
     }
     if (!bindings->BindComputeUniformData(gl, textures, uniform_buffers,
                                           &sampler_cache)) {

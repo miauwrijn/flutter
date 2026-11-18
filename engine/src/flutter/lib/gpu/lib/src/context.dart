@@ -119,8 +119,10 @@ base class GpuContext extends NativeFieldWrapperClass1 {
   ///
   /// For block-compressed formats this returns false if either [renderTarget]
   /// or [shaderWrite] is true, since compressed formats are sample-only.
-  /// For uncompressed formats this currently returns true: today the
-  /// underlying capability surface does not vary by per-format usage.
+  /// For uncompressed formats, [shaderWrite] is answered per format: it is
+  /// true where a compute shader can bind a texture of the format as a
+  /// [StorageTextureSlot], which also needs [supportsCompute]. Render-target
+  /// and shader-read support do not yet vary by format.
   bool supportsTextureFormat(
     PixelFormat format, {
     bool renderTarget = false,

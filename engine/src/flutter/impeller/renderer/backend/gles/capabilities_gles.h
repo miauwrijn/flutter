@@ -211,6 +211,9 @@ class CapabilitiesGLES final
   // |Capabilities|
   size_t GetMinimumStorageBufferAlignment() const override;
 
+  // |Capabilities|
+  bool SupportsShaderWriteFormat(PixelFormat format) const override;
+
   /// The maximum number of storage blocks a shader of [stage] can declare.
   size_t GetMaxShaderStorageBlocks(ShaderStage stage) const;
 

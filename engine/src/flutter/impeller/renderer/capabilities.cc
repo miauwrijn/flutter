@@ -15,6 +15,24 @@ size_t Capabilities::GetMinimumStorageBufferAlignment() const {
   return GetMinimumUniformAlignment();
 }
 
+bool Capabilities::SupportsShaderWriteFormat(PixelFormat format) const {
+  if (!SupportsCompute()) {
+    return false;
+  }
+  switch (format) {
+    case PixelFormat::kR8UNormInt:
+    case PixelFormat::kR8G8UNormInt:
+    case PixelFormat::kR8G8B8A8UNormInt:
+    case PixelFormat::kB8G8R8A8UNormInt:
+    case PixelFormat::kR16G16B16A16Float:
+    case PixelFormat::kR32G32B32A32Float:
+    case PixelFormat::kR32Float:
+      return true;
+    default:
+      return false;
+  }
+}
+
 class StandardCapabilities final : public Capabilities {
  public:
   // |Capabilities|

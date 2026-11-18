@@ -627,6 +627,69 @@ std::shared_ptr<ShaderBundleData> Reflector::GenerateShaderBundleData() const {
     data->AddStorageBuffer(std::move(storage_buffer));
   }
 
+  const auto storage_images = compiler_->get_shader_resources().storage_images;
+  for (const auto& image : storage_images) {
+    const auto& type = compiler_->get_type(image.type_id);
+    if (type.image.dim != spv::Dim::Dim2D || type.image.arrayed ||
+        type.image.ms) {
+      VALIDATION_LOG << "The storage image '" << image.name
+                     << "' must be a non-array, single-sampled image2D. Other "
+                        "storage image types are not supported.";
+      return nullptr;
+    }
+    ShaderBundleData::ShaderStorageTexture storage_texture;
+    storage_texture.name = image.name;
+    storage_texture.ext_res_0 = compiler_.GetExtendedMSLResourceBinding(
+        CompilerBackend::ExtendedResourceIndex::kPrimary, image.id);
+    storage_texture.set = compiler_->get_decoration(
+        image.id, spv::Decoration::DecorationDescriptorSet);
+    storage_texture.binding =
+        compiler_->get_decoration(image.id, spv::Decoration::DecorationBinding);
+
+    const bool non_writable =
+        compiler_->has_decoration(image.id, spv::DecorationNonWritable);
+    const bool non_readable =
+        compiler_->has_decoration(image.id, spv::DecorationNonReadable);
+    if (non_writable && !non_readable) {
+      storage_texture.access =
+          fb::shaderbundle::ShaderResourceAccess::kReadOnly;
+    } else if (non_readable && !non_writable) {
+      storage_texture.access =
+          fb::shaderbundle::ShaderResourceAccess::kWriteOnly;
+    } else {
+      storage_texture.access =
+          fb::shaderbundle::ShaderResourceAccess::kReadWrite;
+    }
+
+    switch (type.image.format) {
+      case spv::ImageFormatRgba8:
+        storage_texture.format =
+            fb::shaderbundle::ShaderStorageTextureFormat::kRGBA8;
+        break;
+      case spv::ImageFormatRgba16f:
+        storage_texture.format =
+            fb::shaderbundle::ShaderStorageTextureFormat::kRGBA16F;
+        break;
+      case spv::ImageFormatRgba32f:
+        storage_texture.format =
+            fb::shaderbundle::ShaderStorageTextureFormat::kRGBA32F;
+        break;
+      case spv::ImageFormatR32f:
+        storage_texture.format =
+            fb::shaderbundle::ShaderStorageTextureFormat::kR32F;
+        break;
+      default:
+        // OpenGL ES requires every image to declare a format, and these are
+        // the formats every backend can bind for storage.
+        VALIDATION_LOG << "The storage image '" << image.name
+                       << "' must declare one of the formats rgba8, rgba16f, "
+                          "rgba32f or r32f, as in "
+                          "`layout(rgba8, binding = 0) uniform image2D`.";
+        return nullptr;
+    }
+    data->AddStorageTexture(std::move(storage_texture));
+  }
+
   if (auto workgroup_size = ReflectWorkgroupSize();
       workgroup_size.has_value()) {
     data->SetWorkgroupSize(workgroup_size.value());

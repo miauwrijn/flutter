@@ -34,6 +34,10 @@ void ShaderBundleData::AddStorageBuffer(ShaderStorageBuffer storage_buffer) {
   storage_buffers_.emplace_back(std::move(storage_buffer));
 }
 
+void ShaderBundleData::AddStorageTexture(ShaderStorageTexture storage_texture) {
+  storage_textures_.emplace_back(std::move(storage_texture));
+}
+
 void ShaderBundleData::AddInputDescription(InputDescription input) {
   inputs_.emplace_back(std::move(input));
 }
@@ -238,6 +242,21 @@ ShaderBundleData::CreateFlatbuffer() const {
     desc->size_in_bytes = storage_buffer.size_in_bytes;
     desc->runtime_array_stride = storage_buffer.runtime_array_stride;
     shader_bundle->storage_buffers.emplace_back(std::move(desc));
+  }
+
+  for (const auto& storage_texture : storage_textures_) {
+    auto desc = std::make_unique<fb::shaderbundle::ShaderStorageTextureT>();
+    desc->name = storage_texture.name;
+    if (desc->name.empty()) {
+      VALIDATION_LOG << "Storage texture name cannot be empty.";
+      return nullptr;
+    }
+    desc->ext_res_0 = storage_texture.ext_res_0;
+    desc->set = storage_texture.set;
+    desc->binding = storage_texture.binding;
+    desc->access = storage_texture.access;
+    desc->format = storage_texture.format;
+    shader_bundle->storage_textures.emplace_back(std::move(desc));
   }
 
   if (workgroup_size_.has_value()) {

@@ -6,6 +6,7 @@
 #include "impeller/compiler/shader_bundle.h"
 
 #include <filesystem>
+#include <tuple>
 
 #include "flutter/fml/file.h"
 #include "flutter/fml/mapping.h"
@@ -475,6 +476,47 @@ TEST(ShaderBundleTest, ComputeMetadataRoundTripsThroughSerialization) {
     }
   }
   EXPECT_TRUE(found_output);
+}
+
+TEST(ShaderBundleTest, ReflectsStorageTextures) {
+  for (const auto& [fixture, access, format] : std::vector<
+           std::tuple<std::string, fb::shaderbundle::ShaderResourceAccess,
+                      fb::shaderbundle::ShaderStorageTextureFormat>>{
+           {"flutter_gpu_compute_storage_texture.comp",
+            fb::shaderbundle::ShaderResourceAccess::kWriteOnly,
+            fb::shaderbundle::ShaderStorageTextureFormat::kRGBA8},
+           {"flutter_gpu_compute_storage_texture_rw.comp",
+            fb::shaderbundle::ShaderResourceAccess::kReadWrite,
+            fb::shaderbundle::ShaderStorageTextureFormat::kR32F},
+       }) {
+    std::optional<fb::shaderbundle::ShaderBundleT> bundle =
+        GenerateComputeBundle(fixture);
+    ASSERT_TRUE(bundle.has_value()) << fixture;
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    const auto* compute = FindByName(bundle->shaders, "Compute");
+    ASSERT_NE(compute, nullptr);
+    const std::vector<const fb::shaderbundle::BackendShaderT*> variants = {
+        compute->metal_ios.get(), compute->metal_desktop.get(),
+        compute->opengl_es.get(), compute->opengl_desktop.get(),
+        compute->vulkan.get()};
+    for (const auto* variant : variants) {
+      ASSERT_NE(variant, nullptr);
+      ASSERT_EQ(variant->storage_textures.size(), 1u) << fixture;
+      const auto& texture = variant->storage_textures.front();
+      EXPECT_EQ(texture->binding, 0u);
+      EXPECT_EQ(texture->access, access) << fixture;
+      EXPECT_EQ(texture->format, format) << fixture;
+      EXPECT_NE(texture->ext_res_0, kOptimizedOutBinding);
+      // Storage textures are not sampled textures.
+      EXPECT_TRUE(variant->uniform_textures.empty());
+    }
+  }
+}
+
+TEST(ShaderBundleTest, RejectsUnsupportedStorageTextureTypes) {
+  EXPECT_FALSE(
+      GenerateComputeBundle("flutter_gpu_compute_storage_texture_cube.comp")
+          .has_value());
 }
 
 TEST(ShaderBundleTest, RejectsComputeShaderWithSpecializedWorkgroupSize) {

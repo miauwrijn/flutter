@@ -35,8 +35,11 @@ class ComputePassVK final : public ComputePass {
     DescriptorType type = DescriptorType::kUniformBuffer;
     /// Set for a uniform or storage buffer.
     std::optional<vk::DescriptorBufferInfo> buffer_info;
-    /// Set for a sampled image.
+    /// Set for a sampled or storage image.
     std::optional<vk::DescriptorImageInfo> image_info;
+    /// Set for a storage image, which is moved to the general layout before
+    /// a dispatch that uses it.
+    std::shared_ptr<const Texture> storage_texture;
   };
 
   /// The command buffer the pass records into.
@@ -57,6 +60,12 @@ class ComputePassVK final : public ComputePass {
   /// Whether a dispatch was recorded. The first dispatch waits on earlier
   /// render and blit passes, and each later one on the dispatch before it.
   bool has_dispatched_ = false;
+  /// The storage images a dispatch in this pass used. The pass ends by
+  /// moving them to the shader-read layout, which later passes expect.
+  std::vector<std::shared_ptr<const Texture>> storage_textures_;
+
+  /// Moves the storage images the bound pipeline uses to the general layout.
+  bool TransitionStorageTextures();
   /// Whether `SetCommandLabel` pushed a debug group that the next dispatch
   /// pops.
   bool has_label_ = false;

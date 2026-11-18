@@ -1,0 +1,21 @@
+// Copyright 2013 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// Maps each texel v of a storage texture to v * 2 + 1 in place, so a dispatch
+// reads what the dispatch before it wrote. OpenGL ES only allows read-write
+// access to r32f images.
+
+layout(local_size_x = 4, local_size_y = 1) in;
+
+layout(binding = 0, r32f) uniform image2D values;
+
+void main() {
+  ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = imageSize(values);
+  if (coord.x >= size.x || coord.y >= size.y) {
+    return;
+  }
+  vec4 value = imageLoad(values, coord);
+  imageStore(values, coord, vec4(value.x * 2.0 + 1.0, 0.0, 0.0, 0.0));
+}

@@ -69,6 +69,88 @@ base class UniformSlot {
   }
 }
 
+/// How a compute shader accesses a [StorageTextureSlot], from the `readonly`
+/// or `writeonly` qualifier on its `image2D`.
+enum StorageTextureAccess {
+  /// Neither qualifier: the shader reads and writes the texture. OpenGL ES
+  /// only allows this for `r32f` textures.
+  readWrite,
+
+  /// `readonly`.
+  readOnly,
+
+  /// `writeonly`.
+  writeOnly,
+}
+
+/// A storage texture (an `image2D`) declared by a compute shader, looked up
+/// by name with [Shader.getStorageTextureSlot].
+///
+/// A compute shader reads and writes a storage texture without a sampler,
+/// with `imageLoad` and `imageStore`. Bind a [Texture] to it with
+/// [ComputePass.bindStorageTexture]. The texture must be a single-sampled 2D
+/// texture created with `enableShaderWriteUsage`, in the [format] the shader
+/// declares with its layout qualifier. The formats are `rgba8`
+/// ([PixelFormat.r8g8b8a8UNormInt]), `rgba16f`, `rgba32f` and `r32f`, the
+/// ones every backend can bind for storage.
+///
+/// ```glsl
+/// layout(binding = 0, rgba8) uniform writeonly image2D output_image;
+/// ```
+base class StorageTextureSlot {
+  StorageTextureSlot._(this.shader, this.storageTextureName);
+
+  /// The shader that declares the storage texture.
+  final Shader shader;
+
+  /// The name of the `image2D` in the shader.
+  final String storageTextureName;
+
+  int _index = _kSlotIndexUnresolved;
+  int _format = -1;
+  int _access = -1;
+  int _epoch = _shaderReloadEpoch;
+
+  int get _resolvedIndex {
+    if (_epoch != _shaderReloadEpoch) {
+      _index = _kSlotIndexUnresolved;
+      _epoch = _shaderReloadEpoch;
+    }
+    if (_index == _kSlotIndexUnresolved) {
+      _index = shader._getStorageTextureIndex(storageTextureName);
+      if (_index >= 0) {
+        _format = shader._getStorageTextureFormatAt(_index);
+        _access = shader._getStorageTextureAccessAt(_index);
+      }
+    }
+    return _index;
+  }
+
+  int get _checkedIndex {
+    final int index = _resolvedIndex;
+    if (index < 0) {
+      throw StateError(
+        "The shader no longer declares a storage texture named '$storageTextureName'. "
+        'A hot reload removed it.',
+      );
+    }
+    return index;
+  }
+
+  /// The texel format the shader declares for the texture. A bound texture
+  /// must have this format.
+  PixelFormat get format {
+    _checkedIndex;
+    return PixelFormat.values[_format];
+  }
+
+  /// How the shader accesses the texture.
+  StorageTextureAccess get access {
+    _checkedIndex;
+    return StorageTextureAccess.values[_access];
+  }
+}
+
 /// A storage buffer declared by a compute shader, looked up by its block name
 /// with [Shader.getStorageBufferSlot], which only returns slots for storage
 /// buffers the shader declares.
@@ -226,6 +308,45 @@ base class Shader extends NativeFieldWrapperClass1 {
     }
     return slot;
   }
+
+  final Map<String, StorageTextureSlot> _storageTextureSlots =
+      <String, StorageTextureSlot>{};
+
+  /// Returns the slot for the storage texture (an `image2D`) named
+  /// [storageTextureName] in this compute shader.
+  ///
+  /// Throws an [ArgumentError] if the shader does not declare a storage
+  /// texture with that name. Repeated calls with the same name return the
+  /// same slot. If a hot reload later removes the storage texture from the
+  /// shader, using the slot throws a [StateError].
+  StorageTextureSlot getStorageTextureSlot(String storageTextureName) {
+    final StorageTextureSlot slot = _storageTextureSlots[storageTextureName] ??=
+        StorageTextureSlot._(this, storageTextureName);
+    if (slot._resolvedIndex < 0) {
+      _storageTextureSlots.remove(storageTextureName);
+      throw ArgumentError.value(
+        storageTextureName,
+        'storageTextureName',
+        'The shader declares no storage texture with this name',
+      );
+    }
+    return slot;
+  }
+
+  @Native<Int Function(Pointer<Void>, Handle)>(
+    symbol: 'InternalFlutterGpu_Shader_GetStorageTextureIndex',
+  )
+  external int _getStorageTextureIndex(String storageTextureName);
+
+  @Native<Int Function(Pointer<Void>, Int)>(
+    symbol: 'InternalFlutterGpu_Shader_GetStorageTextureFormatAt',
+  )
+  external int _getStorageTextureFormatAt(int storageTextureIndex);
+
+  @Native<Int Function(Pointer<Void>, Int)>(
+    symbol: 'InternalFlutterGpu_Shader_GetStorageTextureAccessAt',
+  )
+  external int _getStorageTextureAccessAt(int storageTextureIndex);
 
   @Native<Int Function(Pointer<Void>, Handle)>(
     symbol: 'InternalFlutterGpu_Shader_GetUniformStructSize',

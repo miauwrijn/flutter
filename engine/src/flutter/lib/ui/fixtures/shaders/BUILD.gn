@@ -69,6 +69,8 @@ if (enable_unittests) {
       "//flutter/impeller/fixtures/flutter_gpu_compute.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_oversized.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_scale.comp",
+      "//flutter/impeller/fixtures/flutter_gpu_compute_storage_texture.comp",
+      "//flutter/impeller/fixtures/flutter_gpu_compute_storage_texture_rw.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_texture.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_triangle.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_unused.comp",
@@ -91,6 +93,8 @@ if (enable_unittests) {
       "\"ComputeTextureTriangle\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_texture.comp\"}",
       "\"ComputeTriangle\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_triangle.comp\"}",
       "\"ComputeScaleWithUnused\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_unused.comp\"}",
+      "\"ComputeStorageTexture\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_storage_texture.comp\"}",
+      "\"ComputeStorageTextureReadWrite\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_storage_texture_rw.comp\"}",
     ]
     shader_bundle = "{" + string_join(", ", shader_bundle_entries) + "}"
     shader_bundle_output = "test.shaderbundle"

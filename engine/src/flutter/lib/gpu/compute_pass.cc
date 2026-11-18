@@ -150,6 +150,43 @@ absl::Status ComputePass::BindTexture(
   return absl::OkStatus();
 }
 
+absl::Status ComputePass::BindStorageTexture(
+    const Shader& shader,
+    const Shader::StorageTextureBinding* binding,
+    std::shared_ptr<const impeller::Texture> texture) {
+  if (absl::Status status = ValidateBinding(shader, binding); !status.ok()) {
+    return status;
+  }
+  if (!texture) {
+    return absl::InvalidArgumentError("The texture is null.");
+  }
+  const impeller::TextureDescriptor& desc = texture->GetTextureDescriptor();
+  if (!(desc.usage & impeller::TextureUsage::kShaderWrite)) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "The texture bound to the storage texture '", binding->metadata.name,
+        "' must be created with enableShaderWriteUsage, which storage "
+        "textures need even when the shader only reads them."));
+  }
+  if (desc.type != impeller::TextureType::kTexture2D ||
+      desc.sample_count != impeller::SampleCount::kCount1) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "The texture bound to the storage texture '", binding->metadata.name,
+        "' must be a single-sampled 2D texture."));
+  }
+  if (binding->format != impeller::PixelFormat::kUnknown &&
+      desc.format != binding->format) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "The storage texture '", binding->metadata.name, "' is declared as ",
+        impeller::PixelFormatToString(binding->format),
+        ", but the bound texture is ",
+        impeller::PixelFormatToString(desc.format), "."));
+  }
+  storage_texture_bindings_.insert_or_assign(&binding->metadata,
+                                             std::move(texture));
+  bindings_dirty_ = true;
+  return absl::OkStatus();
+}
+
 void ComputePass::BindSet(size_t slot, fml::RefPtr<BindingSet> set) {
   if (slot >= kMaxBindingSets) {
     return;
@@ -161,6 +198,7 @@ void ComputePass::BindSet(size_t slot, fml::RefPtr<BindingSet> set) {
 void ComputePass::ClearBindings() {
   buffer_bindings_.clear();
   texture_bindings_.clear();
+  storage_texture_bindings_.clear();
   for (auto& set : binding_sets_) {
     set = nullptr;
   }
@@ -298,6 +336,27 @@ absl::Status ComputePass::ApplyBindings(const Shader& shader) {
                                 impeller::DescriptorType::kSampledImage,
                                 binding->slot, &binding->metadata,
                                 std::move(texture), sampler);
+  }
+
+  for (int i = 0; const Shader::StorageTextureBinding* binding =
+                      shader.GetStorageTextureAt(i);
+       i++) {
+    auto found = storage_texture_bindings_.find(&binding->metadata);
+    if (found == storage_texture_bindings_.end()) {
+      return missing("storage texture", binding->metadata.name);
+    }
+    if (IsOptimizedOut(binding->slot.texture_index)) {
+      continue;
+    }
+    if (!compute_pass_->BindResource(
+            impeller::ShaderStage::kCompute,
+            impeller::DescriptorType::kStorageImage, binding->slot,
+            &binding->metadata, found->second,
+            impeller::raw_ptr<const impeller::Sampler>())) {
+      return absl::InternalError(
+          absl::StrCat("Failed to bind the storage texture '",
+                       binding->metadata.name, "'."));
+    }
   }
 
   return absl::OkStatus();
@@ -455,6 +514,21 @@ bool InternalFlutterGpu_ComputePass_BindTextureIndexed(
           texture->GetTexture(),
           wrapper->GetContext()->GetSamplerLibrary()->GetSampler(sampler_desc))
       .ok();
+}
+
+Dart_Handle InternalFlutterGpu_ComputePass_BindStorageTextureIndexed(
+    flutter::gpu::ComputePass* wrapper,
+    flutter::gpu::Shader* shader,
+    int storage_texture_index,
+    flutter::gpu::Texture* texture) {
+  const flutter::gpu::Shader::StorageTextureBinding* binding =
+      shader->GetStorageTextureAt(storage_texture_index);
+  absl::Status status =
+      wrapper->BindStorageTexture(*shader, binding, texture->GetTexture());
+  if (!status.ok()) {
+    return tonic::ToDart(std::string(status.message()));
+  }
+  return Dart_Null();
 }
 
 void InternalFlutterGpu_ComputePass_BindSet(

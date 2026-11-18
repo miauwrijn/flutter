@@ -121,10 +121,21 @@ bool ComputePassMTL::BindResource(ShaderStage stage,
                                   const ShaderMetadata* metadata,
                                   std::shared_ptr<const Texture> texture,
                                   raw_ptr<const Sampler> sampler) {
-  if (!sampler || !texture->IsValid()) {
+  if (!texture || !texture->IsValid()) {
     return false;
   }
 
+  // A storage texture is read and written without a sampler. Its texture
+  // must have been created with MTLTextureUsageShaderWrite.
+  if (type == DescriptorType::kStorageImage) {
+    pass_bindings_cache_.SetTexture(slot.texture_index,
+                                    TextureMTL::Cast(*texture).GetMTLTexture());
+    return true;
+  }
+
+  if (!sampler) {
+    return false;
+  }
   pass_bindings_cache_.SetTexture(slot.texture_index,
                                   TextureMTL::Cast(*texture).GetMTLTexture());
   pass_bindings_cache_.SetSampler(

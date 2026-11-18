@@ -87,6 +87,15 @@ class ComputePass : public RefCountedDartWrappable<ComputePass> {
       std::shared_ptr<const impeller::Texture> texture,
       const impeller::raw_ptr<const impeller::Sampler>& sampler);
 
+  /// Binds [texture] to a storage texture the shader reads or writes without
+  /// a sampler. Returns an error naming the problem if the texture is null,
+  /// lacks the shader-write usage, has another format than the shader
+  /// declares, or is not a single-sampled 2D texture.
+  absl::Status BindStorageTexture(
+      const Shader& shader,
+      const Shader::StorageTextureBinding* binding,
+      std::shared_ptr<const impeller::Texture> texture);
+
   /// The number of binding set slots a pass can hold at once. Mirrors
   /// `ComputePass.maxBindingSets` in `gpu/lib/src/compute_pass.dart`.
   static constexpr size_t kMaxBindingSets = 4;
@@ -132,6 +141,9 @@ class ComputePass : public RefCountedDartWrappable<ComputePass> {
       buffer_bindings_;
   absl::flat_hash_map<const impeller::ShaderMetadata*, TextureBinding>
       texture_bindings_;
+  absl::flat_hash_map<const impeller::ShaderMetadata*,
+                      std::shared_ptr<const impeller::Texture>>
+      storage_texture_bindings_;
   std::array<fml::RefPtr<BindingSet>, kMaxBindingSets> binding_sets_;
   // Whether a binding changed since the backend pass last received them.
   bool bindings_dirty_ = true;
@@ -195,6 +207,14 @@ extern bool InternalFlutterGpu_ComputePass_BindTextureIndexed(
     int width_address_mode,
     int height_address_mode,
     int max_anisotropy);
+
+/// Returns null on success, or the reason the texture cannot be bound.
+FLUTTER_GPU_EXPORT
+extern Dart_Handle InternalFlutterGpu_ComputePass_BindStorageTextureIndexed(
+    flutter::gpu::ComputePass* wrapper,
+    flutter::gpu::Shader* shader,
+    int storage_texture_index,
+    flutter::gpu::Texture* texture);
 
 FLUTTER_GPU_EXPORT
 extern void InternalFlutterGpu_ComputePass_BindSet(

@@ -20,6 +20,18 @@ namespace impeller {
 class TextureGLES final : public Texture,
                           public BackendCast<TextureGLES, Texture> {
  public:
+  /// The sized internal format immutable storage is allocated with, for the
+  /// formats compute shaders can bind as images on OpenGL ES 3.1.
+  static std::optional<GLenum> ToStorageInternalFormat(PixelFormat format);
+
+  /// Whether this texture is allocated with immutable storage, so it can be
+  /// bound as an image with glBindImageTexture.
+  bool UsesImmutableStorage() const;
+
+  /// Allocates the immutable storage now if it was not allocated yet. Binds
+  /// the texture. Runs on the reactor.
+  bool EnsureImmutableStorage();
+
   enum class Type {
     kTexture,
     kTextureMultisampled,
@@ -200,11 +212,27 @@ class TextureGLES final : public Texture,
   static constexpr size_t kMaxTrackedMipLevels = 16;
   std::array<std::bitset<kMaxTrackedMipLevels>, 6> slice_mip_initialized_ = {};
   const bool is_wrapped_;
+  // Whether this texture is allocated with immutable storage
+  // (glTexStorage2D), which OpenGL ES requires for textures bound as images
+  // by compute shaders. Set for 2D textures with the shader-write usage.
+  // Immutable textures are filled with glTexSubImage2D only.
+  bool uses_immutable_storage_ = false;
+  // Whether the immutable storage was allocated. Shared with queued upload
+  // operations, which allocate it if they run first. Only accessed on the
+  // reactor.
+  std::shared_ptr<bool> immutable_storage_allocated_ =
+      std::make_shared<bool>(false);
   const std::optional<GLuint> wrapped_fbo_;
   UniqueHandleGLES cached_fbo_;
   uint32_t cached_fbo_mip_level_ = 0;
   uint32_t cached_fbo_slice_ = 0;
   bool is_valid_ = false;
+
+  /// Allocates the immutable storage of the currently bound GL_TEXTURE_2D,
+  /// unless [allocated] says it already was. Runs on the reactor.
+  static void AllocateImmutableStorageIfNecessary(const ProcTableGLES& gl,
+                                                  const TextureDescriptor& desc,
+                                                  bool& allocated);
 
   TextureGLES(std::shared_ptr<ReactorGLES> reactor,
               TextureDescriptor desc,

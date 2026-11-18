@@ -3839,4 +3839,169 @@ void main() async {
 
     expect((await bytes).buffer.asFloat32List(), <double>[2, 4, 6, 8, 10, 12]);
   }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('Shader.getStorageTextureSlot reflects the format and access', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.Shader writeShader = await getComputeShader('ComputeStorageTexture');
+    final gpu.StorageTextureSlot output = writeShader.getStorageTextureSlot('output_image');
+    expect(output.format, gpu.PixelFormat.r8g8b8a8UNormInt);
+    expect(output.access, gpu.StorageTextureAccess.writeOnly);
+    expect(identical(writeShader.getStorageTextureSlot('output_image'), output), isTrue);
+    expect(() => writeShader.getStorageTextureSlot('missing'), throwsArgumentError);
+
+    final gpu.Shader readWriteShader = await getComputeShader('ComputeStorageTextureReadWrite');
+    final gpu.StorageTextureSlot values = readWriteShader.getStorageTextureSlot('values');
+    expect(values.format, gpu.PixelFormat.r32Float);
+    expect(values.access, gpu.StorageTextureAccess.readWrite);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('GpuContext.supportsTextureFormat answers shaderWrite per format', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    // Every backend binds these for storage.
+    for (final format in <gpu.PixelFormat>[
+      gpu.PixelFormat.r8g8b8a8UNormInt,
+      gpu.PixelFormat.r32Float,
+    ]) {
+      expect(
+        gpu.gpuContext.supportsTextureFormat(format, shaderWrite: true),
+        isTrue,
+        reason: '$format',
+      );
+    }
+    // sRGB and depth formats cannot be storage textures.
+    expect(
+      gpu.gpuContext.supportsTextureFormat(gpu.PixelFormat.r8g8b8a8UNormIntSRGB, shaderWrite: true),
+      isFalse,
+    );
+    expect(
+      gpu.gpuContext.supportsTextureFormat(gpu.PixelFormat.d32FloatS8UInt, shaderWrite: true),
+      isFalse,
+    );
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('A compute shader writes a storage texture that is read back and sampled', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline pipeline = await createComputePipeline('ComputeStorageTexture');
+    final gpu.Texture texture = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      8,
+      4,
+      enableShaderWriteUsage: true,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(pipeline);
+    computePass.bindStorageTexture(pipeline.shader.getStorageTextureSlot('output_image'), texture);
+    // Two 4x4 workgroups across, one down.
+    computePass.dispatch(2);
+    final Future<ByteData> readback = commandBuffer.readTexture(gpu.TextureRegion(texture));
+    await submitAndWait(commandBuffer);
+
+    final ByteData bytes = await readback;
+    expect(bytes.lengthInBytes, 8 * 4 * 4);
+    for (var y = 0; y < 4; y++) {
+      for (var x = 0; x < 8; x++) {
+        final int offset = (y * 8 + x) * 4;
+        expect(bytes.buffer.asUint8List(offset, 4), <int>[x, y, 0, 255], reason: 'texel ($x, $y)');
+      }
+    }
+    // A later pass samples what the compute pass wrote.
+    final ByteData sampled = await readTextureBytes(texture);
+    expect(sampled.buffer.asUint8List(), bytes.buffer.asUint8List());
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('Dependent dispatches read and write one storage texture', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline pipeline = await createComputePipeline(
+      'ComputeStorageTextureReadWrite',
+    );
+    final gpu.Texture texture = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      4,
+      1,
+      format: gpu.PixelFormat.r32Float,
+      enableShaderWriteUsage: true,
+    );
+    final gpu.DeviceBuffer upload = gpu.gpuContext.createDeviceBufferWithCopy(
+      float32(<double>[0, 1, 2, 3]),
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    commandBuffer.copyBufferToTexture(wholeBuffer(upload), gpu.TextureRegion(texture));
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(pipeline);
+    computePass.bindStorageTexture(pipeline.shader.getStorageTextureSlot('values'), texture);
+    // v -> 2v + 1, twice: 4v + 3.
+    computePass.dispatch(1);
+    computePass.dispatch(1);
+    final Future<ByteData> readback = commandBuffer.readTexture(gpu.TextureRegion(texture));
+    await submitAndWait(commandBuffer);
+
+    expect((await readback).buffer.asFloat32List(), <double>[3, 7, 11, 15]);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('ComputePass.bindStorageTexture validates the texture', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline pipeline = await createComputePipeline('ComputeStorageTexture');
+    final gpu.StorageTextureSlot slot = pipeline.shader.getStorageTextureSlot('output_image');
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(pipeline);
+
+    // Without the shader-write usage.
+    expect(
+      () => computePass.bindStorageTexture(
+        slot,
+        gpu.gpuContext.createTexture(gpu.StorageMode.devicePrivate, 4, 4),
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (ArgumentError e) => e.message.toString(),
+          'message',
+          contains('enableShaderWriteUsage'),
+        ),
+      ),
+    );
+    // In another format than the shader declares.
+    expect(
+      () => computePass.bindStorageTexture(
+        slot,
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          4,
+          4,
+          format: gpu.PixelFormat.r32Float,
+          enableShaderWriteUsage: true,
+        ),
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (ArgumentError e) => e.message.toString(),
+          'message',
+          contains('is declared as'),
+        ),
+      ),
+    );
+    // Nothing bound.
+    expect(
+      () => computePass.dispatch(1),
+      throwsA(
+        isA<Exception>().having(
+          (Exception e) => e.toString(),
+          'message',
+          contains("storage texture 'output_image'"),
+        ),
+      ),
+    );
+    await submitAndWait(commandBuffer);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
 }

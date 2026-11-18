@@ -46,6 +46,8 @@ class ComputePassGLES final
   };
 
   struct TextureBinding {
+    /// kSampledImage, or kStorageImage for a texture bound as an image.
+    DescriptorType type = DescriptorType::kSampledImage;
     SampledImageSlot slot;
     const ShaderMetadata* metadata = nullptr;
     std::shared_ptr<const Texture> texture;
@@ -109,6 +111,9 @@ class ComputePassGLES final
 
   // |ComputePass|
   bool EncodeCommands() const override;
+
+  static bool BindStorageTexture(const ProcTableGLES& gl,
+                                 const TextureBinding& binding);
 
   static bool EncodeDispatchesInReactor(const ReactorGLES& reactor,
                                         const std::vector<Dispatch>& dispatches,

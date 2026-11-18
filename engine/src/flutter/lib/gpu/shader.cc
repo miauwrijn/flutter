@@ -50,7 +50,8 @@ fml::RefPtr<Shader> Shader::Make(
     std::unordered_map<std::string, TextureBinding> uniform_textures,
     std::vector<impeller::DescriptorSetLayout> descriptor_set_layouts,
     absl::flat_hash_map<std::string, StorageBufferBinding> storage_buffers,
-    std::optional<std::array<uint32_t, 3>> workgroup_size) {
+    std::optional<std::array<uint32_t, 3>> workgroup_size,
+    absl::flat_hash_map<std::string, StorageTextureBinding> storage_textures) {
   auto shader = fml::MakeRefCounted<Shader>();
   shader->library_id_ = std::move(library_id);
   shader->entrypoint_ = std::move(entrypoint);
@@ -62,6 +63,7 @@ fml::RefPtr<Shader> Shader::Make(
   shader->uniform_textures_ = std::move(uniform_textures);
   shader->descriptor_set_layouts_ = std::move(descriptor_set_layouts);
   shader->storage_buffers_ = std::move(storage_buffers);
+  shader->storage_textures_ = std::move(storage_textures);
   shader->workgroup_size_ = workgroup_size;
   shader->RebuildBindingOrder();
   return shader;
@@ -117,6 +119,7 @@ void Shader::ResetFrom(Shader& other) {
   uniform_textures_ = std::move(other.uniform_textures_);
   descriptor_set_layouts_ = std::move(other.descriptor_set_layouts_);
   storage_buffers_ = std::move(other.storage_buffers_);
+  storage_textures_ = std::move(other.storage_textures_);
   workgroup_size_ = other.workgroup_size_;
   RebuildBindingOrder();
   if (code_changed) {
@@ -300,6 +303,42 @@ void Shader::RebuildBindingOrder() {
   for (const auto& entry : storage_buffers_) {
     storage_buffer_order_.push_back(&entry.second);
   }
+  storage_texture_order_.clear();
+  storage_texture_order_.reserve(storage_textures_.size());
+  for (const auto& entry : storage_textures_) {
+    storage_texture_order_.push_back(&entry.second);
+  }
+}
+
+const Shader::StorageTextureBinding* Shader::GetStorageTexture(
+    const std::string& name) const {
+  auto found = storage_textures_.find(name);
+  if (found == storage_textures_.end()) {
+    return nullptr;
+  }
+  return &found->second;
+}
+
+int Shader::GetStorageTextureIndex(const std::string& name) const {
+  const StorageTextureBinding* binding = GetStorageTexture(name);
+  if (binding == nullptr) {
+    return -1;
+  }
+  for (size_t i = 0; i < storage_texture_order_.size(); i++) {
+    if (storage_texture_order_[i] == binding) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+const Shader::StorageTextureBinding* Shader::GetStorageTextureAt(
+    int index) const {
+  if (index < 0 ||
+      static_cast<size_t>(index) >= storage_texture_order_.size()) {
+    return nullptr;
+  }
+  return storage_texture_order_[index];
 }
 
 }  // namespace gpu
@@ -351,6 +390,36 @@ int InternalFlutterGpu_Shader_GetStorageBufferSizeAt(
     return -1;
   }
   return static_cast<int>(storage_buffer->size_in_bytes);
+}
+
+int InternalFlutterGpu_Shader_GetStorageTextureIndex(
+    flutter::gpu::Shader* wrapper,
+    Dart_Handle storage_texture_name_handle) {
+  auto name = tonic::StdStringFromDart(storage_texture_name_handle);
+  return wrapper->GetStorageTextureIndex(name);
+}
+
+int InternalFlutterGpu_Shader_GetStorageTextureFormatAt(
+    flutter::gpu::Shader* wrapper,
+    int storage_texture_index) {
+  const auto* storage_texture =
+      wrapper->GetStorageTextureAt(storage_texture_index);
+  if (storage_texture == nullptr) {
+    return -1;
+  }
+  return static_cast<int>(
+      flutter::gpu::FromImpellerPixelFormat(storage_texture->format));
+}
+
+int InternalFlutterGpu_Shader_GetStorageTextureAccessAt(
+    flutter::gpu::Shader* wrapper,
+    int storage_texture_index) {
+  const auto* storage_texture =
+      wrapper->GetStorageTextureAt(storage_texture_index);
+  if (storage_texture == nullptr) {
+    return -1;
+  }
+  return static_cast<int>(storage_texture->access);
 }
 
 int InternalFlutterGpu_Shader_GetStorageBufferRuntimeArrayStrideAt(

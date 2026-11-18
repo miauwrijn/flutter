@@ -75,6 +75,21 @@ class ShaderBundleData {
     size_t runtime_array_stride = 0u;
   };
 
+  /// Reflection data for a storage texture (an `image2D`) that a compute
+  /// shader declares, serialized as a `ShaderStorageTexture` in the bundle.
+  struct ShaderStorageTexture {
+    std::string name;
+    /// The Metal texture index, or the binding on Vulkan and OpenGL ES.
+    /// `kOptimizedOutBinding` if the backend compiler removed the texture.
+    size_t ext_res_0 = 0u;
+    size_t set = 0u;
+    size_t binding = 0u;
+    fb::shaderbundle::ShaderResourceAccess access =
+        fb::shaderbundle::ShaderResourceAccess::kReadWrite;
+    fb::shaderbundle::ShaderStorageTextureFormat format =
+        fb::shaderbundle::ShaderStorageTextureFormat::kUnknown;
+  };
+
   ShaderBundleData(std::string entrypoint,
                    spv::ExecutionModel stage,
                    TargetPlatform target_platform);
@@ -86,6 +101,8 @@ class ShaderBundleData {
   void AddUniformTexture(ShaderUniformTexture uniform_texture);
 
   void AddStorageBuffer(ShaderStorageBuffer storage_buffer);
+
+  void AddStorageTexture(ShaderStorageTexture storage_texture);
 
   void AddInputDescription(InputDescription input);
 
@@ -108,6 +125,7 @@ class ShaderBundleData {
   std::vector<ShaderUniformStruct> uniform_structs_;
   std::vector<ShaderUniformTexture> uniform_textures_;
   std::vector<ShaderStorageBuffer> storage_buffers_;
+  std::vector<ShaderStorageTexture> storage_textures_;
   std::optional<std::array<uint32_t, 3>> workgroup_size_;
   std::vector<InputDescription> inputs_;
   std::shared_ptr<fml::Mapping> shader_;
