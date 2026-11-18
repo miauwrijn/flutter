@@ -6,6 +6,7 @@
 #define FLUTTER_IMPELLER_RENDERER_BLIT_COMMAND_H_
 
 #include <cstdint>
+#include "impeller/core/buffer_view.h"
 #include "impeller/core/device_buffer.h"
 #include "impeller/core/texture.h"
 #include "impeller/geometry/rect.h"
@@ -32,6 +33,12 @@ struct BlitCopyTextureToBufferCommand : public BlitCommand {
   std::shared_ptr<Texture> source;
   std::shared_ptr<DeviceBuffer> destination;
   IRect source_region;
+  size_t destination_offset = 0;
+};
+
+struct BlitCopyBufferToBufferCommand : public BlitCommand {
+  BufferView source;
+  std::shared_ptr<DeviceBuffer> destination;
   size_t destination_offset = 0;
 };
 

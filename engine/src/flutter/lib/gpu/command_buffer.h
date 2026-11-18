@@ -78,6 +78,23 @@ class CommandBuffer : public RefCountedDartWrappable<CommandBuffer> {
                            DeviceBuffer& destination,
                            size_t destination_offset);
 
+  /// Records a copy of [length] bytes of [source] starting at [offset] into
+  /// a new host-visible readback buffer, ending the open pass. Returns the
+  /// readback buffer, or null if the copy could not be recorded.
+  ///
+  /// The readback buffer holds the bytes once this command buffer completes,
+  /// after `Invalidate` is called on it.
+  std::shared_ptr<impeller::DeviceBuffer>
+  RecordBufferReadback(DeviceBuffer& source, size_t offset, size_t length);
+
+  /// Records a copy of [source_region] of [source] into a new host-visible
+  /// readback buffer of [length] bytes, tightly packed, ending the open pass.
+  /// Returns the readback buffer, or null if the copy could not be recorded.
+  std::shared_ptr<impeller::DeviceBuffer> RecordTextureReadback(
+      Texture& source,
+      impeller::IRect source_region,
+      size_t length);
+
   bool CopyTextureToTexture(Texture& source,
                             Texture& destination,
                             impeller::IRect source_region,
@@ -109,6 +126,8 @@ class CommandBuffer : public RefCountedDartWrappable<CommandBuffer> {
   bool EndOpenPass();
 
   std::shared_ptr<impeller::BlitPass> GetOrCreateBlitPass();
+
+  std::shared_ptr<impeller::DeviceBuffer> CreateReadbackBuffer(size_t length);
 
   // Every pass in creation order, which is also execution order. Only the
   // last one can be open.
@@ -166,6 +185,25 @@ extern Dart_Handle InternalFlutterGpu_CommandBuffer_CopyTextureToBuffer(
     int source_height,
     flutter::gpu::DeviceBuffer* destination,
     int destination_offset_in_bytes);
+
+FLUTTER_GPU_EXPORT
+extern Dart_Handle InternalFlutterGpu_CommandBuffer_ReadBuffer(
+    flutter::gpu::CommandBuffer* wrapper,
+    flutter::gpu::DeviceBuffer* source,
+    int source_offset_in_bytes,
+    int source_length_in_bytes,
+    Dart_Handle completion_callback);
+
+FLUTTER_GPU_EXPORT
+extern Dart_Handle InternalFlutterGpu_CommandBuffer_ReadTexture(
+    flutter::gpu::CommandBuffer* wrapper,
+    flutter::gpu::Texture* source,
+    int source_x,
+    int source_y,
+    int source_width,
+    int source_height,
+    int length_in_bytes,
+    Dart_Handle completion_callback);
 
 FLUTTER_GPU_EXPORT
 extern Dart_Handle InternalFlutterGpu_CommandBuffer_CopyTextureToTexture(

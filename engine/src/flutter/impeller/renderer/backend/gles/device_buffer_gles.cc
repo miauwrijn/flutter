@@ -63,6 +63,18 @@ bool DeviceBufferGLES::OnCopyHostBuffer(const uint8_t* source,
   return true;
 }
 
+bool DeviceBufferGLES::WriteBufferData(const uint8_t* source,
+                                       Range source_range,
+                                       size_t offset) {
+  if (source_range.length == 0u) {
+    return true;
+  }
+  if (source == nullptr) {
+    return false;
+  }
+  return OnCopyHostBuffer(source, source_range, offset);
+}
+
 std::optional<GLuint> DeviceBufferGLES::GetHandle() const {
   if (handle_.has_value()) {
     return reactor_->GetGLHandle(*handle_);

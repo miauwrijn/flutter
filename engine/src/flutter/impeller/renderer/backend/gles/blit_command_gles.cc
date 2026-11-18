@@ -339,6 +339,30 @@ bool BlitCopyBufferToTextureCommandGLES::Encode(
   return true;
 }
 
+BlitCopyBufferToBufferCommandGLES::~BlitCopyBufferToBufferCommandGLES() =
+    default;
+
+std::string BlitCopyBufferToBufferCommandGLES::GetLabel() const {
+  return label;
+}
+
+bool BlitCopyBufferToBufferCommandGLES::Encode(
+    const ReactorGLES& reactor) const {
+  // On OpenGL ES the host-side shadow copy of a buffer is authoritative: the
+  // GPU never writes to buffers, and every other write (host writes and
+  // texture-to-buffer copies, which read pixels synchronously) lands in the
+  // shadow copy. Copying between shadow copies here, in reactor order, keeps
+  // the copy ordered with the other commands, and marks the destination range
+  // dirty so the next GPU use of it uploads the new bytes.
+  //
+  // This has to change to glCopyBufferSubData once GPU writes to buffers
+  // (compute on OpenGL ES 3.1) exist.
+  const auto& source_gles = DeviceBufferGLES::Cast(*source.GetBuffer());
+  return DeviceBufferGLES::Cast(*destination)
+      .WriteBufferData(source_gles.GetBufferData(), source.GetRange(),
+                       destination_offset);
+}
+
 BlitCopyTextureToBufferCommandGLES::~BlitCopyTextureToBufferCommandGLES() =
     default;
 

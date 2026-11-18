@@ -49,7 +49,7 @@ final class ComputeExtent {
 /// without a manual barrier.
 ///
 /// A pass records until [end] is called, or until its command buffer creates
-/// the next pass, records a copy, or is submitted. After that, every method
+/// the next pass, records a copy or readback, or is submitted. After that, every method
 /// except [end] throws a [StateError] naming what ended the pass.
 ///
 /// ```dart
@@ -97,7 +97,7 @@ base class ComputePass extends NativeFieldWrapperClass1
   /// Ends this pass. Nothing more can be recorded into it.
   ///
   /// A pass also ends when its [CommandBuffer] creates the next pass, records
-  /// a copy, or is submitted, so calling this is optional. Calling it on a pass
+  /// a copy or readback, or is submitted, so calling this is optional. Calling it on a pass
   /// that has already ended does nothing.
   void end() {
     if (_endedBy != null) {

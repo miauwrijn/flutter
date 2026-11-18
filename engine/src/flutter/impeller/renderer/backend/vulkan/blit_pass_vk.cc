@@ -216,6 +216,60 @@ bool BlitPassVK::OnCopyTextureToBufferCommand(
   return true;
 }
 
+// |BlitPass|
+bool BlitPassVK::OnCopyBufferToBufferCommand(
+    BufferView source,
+    std::shared_ptr<DeviceBuffer> destination,
+    size_t destination_offset,
+    std::string_view label) {
+  const auto& cmd_buffer = command_buffer_->GetCommandBuffer();
+
+  const auto& src = DeviceBufferVK::Cast(*source.GetBuffer());
+  const Range source_range = source.GetRange();
+  std::shared_ptr<const DeviceBuffer> source_buffer = source.TakeBuffer();
+  if ((source_buffer && !command_buffer_->Track(source_buffer)) ||
+      !command_buffer_->Track(destination)) {
+    return false;
+  }
+
+  // Order the copy after earlier transfers in this command buffer, such as a
+  // texture-to-buffer copy into [source] in the same blit pass, and after
+  // anything earlier that reads [destination]. Compute passes already end
+  // with a barrier that covers transfers, and host writes are made visible
+  // by the queue submission.
+  {
+    vk::MemoryBarrier barrier;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    barrier.dstAccessMask =
+        vk::AccessFlagBits::eTransferRead | vk::AccessFlagBits::eTransferWrite;
+    cmd_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                               vk::PipelineStageFlagBits::eTransfer, {}, 1,
+                               &barrier, 0, {}, 0, {});
+  }
+
+  vk::BufferCopy region;
+  region.srcOffset = source_range.offset;
+  region.dstOffset = destination_offset;
+  region.size = source_range.length;
+  cmd_buffer.copyBuffer(src.GetBuffer(),
+                        DeviceBufferVK::Cast(*destination).GetBuffer(), 1,
+                        &region);
+
+  // Make the copy visible to host reads of a readback buffer once the
+  // command buffer completes. The host still invalidates non-coherent memory
+  // before reading.
+  if (destination->GetDeviceBufferDescriptor().readback) {
+    vk::MemoryBarrier barrier;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    barrier.dstAccessMask = vk::AccessFlagBits::eHostRead;
+    cmd_buffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                               vk::PipelineStageFlagBits::eHost, {}, 1,
+                               &barrier, 0, {}, 0, {});
+  }
+
+  return true;
+}
+
 bool BlitPassVK::ConvertTextureToShaderRead(
     const std::shared_ptr<Texture>& texture) {
   const auto& cmd_buffer = command_buffer_->GetCommandBuffer();

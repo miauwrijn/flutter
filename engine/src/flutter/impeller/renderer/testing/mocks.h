@@ -84,6 +84,13 @@ class MockBlitPass : public BlitPass {
               (override));
 
   MOCK_METHOD(bool,
+              OnCopyBufferToBufferCommand,
+              (BufferView source,
+               std::shared_ptr<DeviceBuffer> destination,
+               size_t destination_offset,
+               std::string_view label),
+              (override));
+  MOCK_METHOD(bool,
               OnCopyTextureToBufferCommand,
               (std::shared_ptr<Texture> source,
                std::shared_ptr<DeviceBuffer> destination,

@@ -130,6 +130,7 @@ abstract interface class _CommandBufferPass {
 ///  * [createRenderPass] or [createComputePass] creates the next pass.
 ///  * [copyBufferToTexture], [copyTextureToBuffer] or [copyTextureToTexture]
 ///    records a copy.
+///  * [readBuffer] or [readTexture] records a readback.
 ///  * [submit] submits the command buffer.
 ///  * [RenderPass.end] or [ComputePass.end] ends it explicitly.
 ///
@@ -330,6 +331,105 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
     }
   }
 
+  /// Reads the bytes of [source] back to the CPU.
+  ///
+  /// The read is recorded as a command, so it sees exactly the writes of the
+  /// passes and copies recorded before it, such as a [ComputePass] that
+  /// writes [source], and none recorded after it. Recording it ends the open
+  /// [RenderPass] or [ComputePass], if any.
+  ///
+  /// The returned Future completes after this command buffer is submitted and
+  /// finishes on the GPU, with a [ByteData] that the caller owns. It
+  /// completes with an error if the submission fails, or if this command
+  /// buffer is discarded without being submitted.
+  ///
+  /// Works with every [StorageMode]; a [StorageMode.devicePrivate] buffer is
+  /// copied through a staging buffer internally.
+  ///
+  /// ```dart
+  /// final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+  /// final gpu.ComputePass pass = commandBuffer.createComputePass();
+  /// // ... bind and dispatch a shader that writes `results`.
+  /// final Future<ByteData> bytes = commandBuffer.readBuffer(
+  ///   gpu.BufferView(results, offsetInBytes: 0, lengthInBytes: results.sizeInBytes),
+  /// );
+  /// commandBuffer.submit();
+  /// final Float32List values = (await bytes).buffer.asFloat32List();
+  /// ```
+  ///
+  /// Throws a [StateError] if this command buffer was already submitted, and
+  /// an [Exception] if [source] does not lie within its buffer.
+  Future<ByteData> readBuffer(BufferView source) {
+    _checkNotSubmitted('CommandBuffer.readBuffer()');
+    if (source.offsetInBytes < 0 ||
+        source.lengthInBytes < 0 ||
+        source.offsetInBytes + source.lengthInBytes >
+            source.buffer.sizeInBytes) {
+      throw Exception('BufferView range is out of bounds');
+    }
+    _endOpenPass('CommandBuffer.readBuffer()');
+    final Completer<ByteData> completer = Completer<ByteData>();
+    final String? error = _readBuffer(
+      source.buffer,
+      source.offsetInBytes,
+      source.lengthInBytes,
+      _readbackCompleter(completer, 'CommandBuffer.readBuffer()'),
+    );
+    if (error != null) {
+      throw Exception(error);
+    }
+    return completer.future;
+  }
+
+  /// Reads the texels of [source] back to the CPU, tightly packed in rows
+  /// from top to bottom, in the texture's [PixelFormat].
+  ///
+  /// Like [readBuffer], the read is recorded as a command that sees the
+  /// writes recorded before it, ends the open pass, and completes after this
+  /// command buffer finishes on the GPU, or with an error if the submission
+  /// fails or this command buffer is discarded without being submitted.
+  ///
+  /// Only mip level 0 and slice 0 can be read for now. Throws a [StateError]
+  /// if this command buffer was already submitted, and an [Exception] if
+  /// [source] is not a valid region of its texture.
+  Future<ByteData> readTexture(TextureRegion source) {
+    _checkNotSubmitted('CommandBuffer.readTexture()');
+    source._validate(allowMipAndSlice: false);
+    _endOpenPass('CommandBuffer.readTexture()');
+    final Completer<ByteData> completer = Completer<ByteData>();
+    final String? error = _readTexture(
+      source.texture,
+      source.x,
+      source.y,
+      source._resolvedWidth(),
+      source._resolvedHeight(),
+      source._sizeInBytes(),
+      _readbackCompleter(completer, 'CommandBuffer.readTexture()'),
+    );
+    if (error != null) {
+      throw Exception(error);
+    }
+    return completer.future;
+  }
+
+  static void Function(Uint8List?) _readbackCompleter(
+    Completer<ByteData> completer,
+    String method,
+  ) {
+    return (Uint8List? bytes) {
+      if (bytes == null) {
+        completer.completeError(
+          StateError(
+            '$method failed: the CommandBuffer failed on the GPU or was '
+            'discarded without being submitted.',
+          ),
+        );
+      } else {
+        completer.complete(ByteData.sublistView(bytes));
+      }
+    };
+  }
+
   /// Submits the recorded passes and copies to the GPU, in the order they
   /// were recorded.
   ///
@@ -410,6 +510,38 @@ base class CommandBuffer extends NativeFieldWrapperClass1 {
     int sourceHeight,
     DeviceBuffer destination,
     int destinationOffsetInBytes,
+  );
+
+  @Native<Handle Function(Pointer<Void>, Pointer<Void>, Int, Int, Handle)>(
+    symbol: 'InternalFlutterGpu_CommandBuffer_ReadBuffer',
+  )
+  external String? _readBuffer(
+    DeviceBuffer source,
+    int sourceOffsetInBytes,
+    int sourceLengthInBytes,
+    void Function(Uint8List?) completionCallback,
+  );
+
+  @Native<
+    Handle Function(
+      Pointer<Void>,
+      Pointer<Void>,
+      Int,
+      Int,
+      Int,
+      Int,
+      Int,
+      Handle,
+    )
+  >(symbol: 'InternalFlutterGpu_CommandBuffer_ReadTexture')
+  external String? _readTexture(
+    Texture source,
+    int sourceX,
+    int sourceY,
+    int sourceWidth,
+    int sourceHeight,
+    int lengthInBytes,
+    void Function(Uint8List?) completionCallback,
   );
 
   @Native<

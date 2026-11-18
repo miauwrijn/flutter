@@ -4,6 +4,9 @@
 
 #include "flutter/lib/gpu/command_buffer.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "dart_api.h"
 #include "fml/logging.h"
 #include "fml/make_copyable.h"
@@ -24,7 +27,16 @@ CommandBuffer::CommandBuffer(
     : context_(std::move(context)),
       command_buffer_(std::move(command_buffer)) {}
 
-CommandBuffer::~CommandBuffer() = default;
+CommandBuffer::~CommandBuffer() {
+  // A command buffer that is discarded without being submitted never runs.
+  // Report that to everything waiting on it, such as pending readbacks, so
+  // that nothing waits forever.
+  if (!submitted_) {
+    for (auto& callback : completion_callbacks_) {
+      callback(impeller::CommandBuffer::Status::kError);
+    }
+  }
+}
 
 bool CommandBuffer::Encodable::EncodeCommands() const {
   if (render_pass) {
@@ -163,6 +175,62 @@ bool CommandBuffer::CopyTextureToBuffer(Texture& source,
   return blit_pass->AddCopy(source.GetTexture(), destination.GetBuffer(),
                             source_region, destination_offset,
                             "CommandBuffer.copyTextureToBuffer");
+}
+
+std::shared_ptr<impeller::DeviceBuffer> CommandBuffer::CreateReadbackBuffer(
+    size_t length) {
+  impeller::DeviceBufferDescriptor desc;
+  desc.storage_mode = impeller::StorageMode::kHostVisible;
+  // Zero-sized allocations are not portable, and an empty read still
+  // completes in order with the command buffer.
+  desc.size = std::max<size_t>(length, 1u);
+  desc.readback = true;
+  auto buffer = context_->GetResourceAllocator()->CreateBuffer(desc);
+  if (buffer) {
+    buffer->SetLabel("Flutter GPU readback");
+  }
+  return buffer;
+}
+
+std::shared_ptr<impeller::DeviceBuffer> CommandBuffer::RecordBufferReadback(
+    DeviceBuffer& source,
+    size_t offset,
+    size_t length) {
+  auto blit_pass = GetOrCreateBlitPass();
+  if (!blit_pass) {
+    return nullptr;
+  }
+  auto readback = CreateReadbackBuffer(length);
+  if (!readback) {
+    return nullptr;
+  }
+  if (!blit_pass->AddCopy(impeller::BufferView(source.GetBuffer(),
+                                               impeller::Range(offset, length)),
+                          readback, /*destination_offset=*/0,
+                          "CommandBuffer.readBuffer")) {
+    return nullptr;
+  }
+  return readback;
+}
+
+std::shared_ptr<impeller::DeviceBuffer> CommandBuffer::RecordTextureReadback(
+    Texture& source,
+    impeller::IRect source_region,
+    size_t length) {
+  auto blit_pass = GetOrCreateBlitPass();
+  if (!blit_pass) {
+    return nullptr;
+  }
+  auto readback = CreateReadbackBuffer(length);
+  if (!readback) {
+    return nullptr;
+  }
+  if (!blit_pass->AddCopy(source.GetTexture(), readback, source_region,
+                          /*destination_offset=*/0,
+                          "CommandBuffer.readTexture")) {
+    return nullptr;
+  }
+  return readback;
 }
 
 bool CommandBuffer::CopyTextureToTexture(Texture& source,
@@ -331,6 +399,134 @@ Dart_Handle InternalFlutterGpu_CommandBuffer_Submit(
   bool success = wrapper->Submit(ui_task_completion_callback);
   if (!success) {
     return tonic::ToDart("Failed to submit CommandBuffer");
+  }
+  return Dart_Null();
+}
+
+namespace {
+
+/// Completes a readback on the UI thread: calls [callback] with a Uint8List
+/// holding the first [length] bytes of [readback], or with null if the command
+/// buffer failed or was discarded.
+impeller::CommandBuffer::CompletionCallback MakeReadbackCompletion(
+    Dart_Handle completion_callback,
+    std::shared_ptr<impeller::DeviceBuffer> readback,
+    size_t length) {
+  auto dart_state = flutter::UIDartState::Current();
+  auto ui_task_runner = dart_state->GetTaskRunners().GetUITaskRunner();
+  auto persistent_callback = std::make_unique<tonic::DartPersistentValue>(
+      dart_state, completion_callback);
+
+  return fml::MakeCopyable([callback = std::move(persistent_callback),
+                            readback = std::move(readback), length,
+                            ui_task_runner](
+                               impeller::CommandBuffer::Status status) mutable {
+    // Called at most once, from the thread that observes completion.
+    if (!callback) {
+      return;
+    }
+    const bool success = status == impeller::CommandBuffer::Status::kCompleted;
+    ui_task_runner->PostTask(fml::MakeCopyable([callback = std::move(callback),
+                                                readback = std::move(readback),
+                                                length, success]() mutable {
+      auto dart_state = callback->dart_state().lock();
+      if (!dart_state) {
+        // The isolate could have died in the meantime.
+        return;
+      }
+      tonic::DartState::Scope scope(dart_state);
+
+      Dart_Handle result = Dart_Null();
+      const uint8_t* contents = nullptr;
+      if (success) {
+        // Make GPU writes to non-coherent memory visible to the host.
+        readback->Invalidate(impeller::Range(0, length));
+        contents = readback->OnGetContents();
+      }
+      if (contents) {
+        result = Dart_NewTypedData(Dart_TypedData_kUint8, length);
+        if (!Dart_IsError(result) && length > 0) {
+          Dart_TypedData_Type type;
+          void* data = nullptr;
+          intptr_t data_length = 0;
+          Dart_Handle acquired =
+              Dart_TypedDataAcquireData(result, &type, &data, &data_length);
+          if (Dart_IsError(acquired)) {
+            result = Dart_Null();
+          } else {
+            std::memcpy(data, contents, length);
+            Dart_TypedDataReleaseData(result);
+          }
+        }
+        if (Dart_IsError(result)) {
+          result = Dart_Null();
+        }
+      }
+
+      tonic::DartInvoke(callback->Get(), {result});
+
+      // The callback belongs to the isolate and must be released on
+      // the UI thread.
+      callback.reset();
+    }));
+  });
+}
+
+}  // namespace
+
+Dart_Handle InternalFlutterGpu_CommandBuffer_ReadBuffer(
+    flutter::gpu::CommandBuffer* wrapper,
+    flutter::gpu::DeviceBuffer* source,
+    int source_offset_in_bytes,
+    int source_length_in_bytes,
+    Dart_Handle completion_callback) {
+  if (!Dart_IsClosure(completion_callback)) {
+    return tonic::ToDart("Completion callback must be a function");
+  }
+  if (source_offset_in_bytes < 0 || source_length_in_bytes < 0) {
+    return tonic::ToDart("Readback range must be non-negative");
+  }
+  auto readback = wrapper->RecordBufferReadback(
+      *source, static_cast<size_t>(source_offset_in_bytes),
+      static_cast<size_t>(source_length_in_bytes));
+  if (!readback) {
+    return tonic::ToDart("Failed to record the buffer readback");
+  }
+  if (!wrapper->AddCompletionCallback(MakeReadbackCompletion(
+          completion_callback, std::move(readback),
+          static_cast<size_t>(source_length_in_bytes)))) {
+    return tonic::ToDart("The CommandBuffer was already submitted");
+  }
+  return Dart_Null();
+}
+
+Dart_Handle InternalFlutterGpu_CommandBuffer_ReadTexture(
+    flutter::gpu::CommandBuffer* wrapper,
+    flutter::gpu::Texture* source,
+    int source_x,
+    int source_y,
+    int source_width,
+    int source_height,
+    int length_in_bytes,
+    Dart_Handle completion_callback) {
+  if (!Dart_IsClosure(completion_callback)) {
+    return tonic::ToDart("Completion callback must be a function");
+  }
+  if (length_in_bytes < 0) {
+    return tonic::ToDart("Readback length must be non-negative");
+  }
+  auto readback = wrapper->RecordTextureReadback(
+      *source,
+      impeller::IRect::MakeXYWH(source_x, source_y, source_width,
+                                source_height),
+      static_cast<size_t>(length_in_bytes));
+  if (!readback) {
+    return tonic::ToDart("Failed to record the texture readback");
+  }
+  if (!wrapper->AddCompletionCallback(
+          MakeReadbackCompletion(completion_callback, std::move(readback),
+                                 static_cast<size_t>(length_in_bytes)))) {
+    return tonic::ToDart("The CommandBuffer was already submitted");
   }
   return Dart_Null();
 }

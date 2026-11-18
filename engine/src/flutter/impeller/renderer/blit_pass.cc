@@ -115,6 +115,49 @@ bool BlitPass::AddCopy(std::shared_ptr<Texture> source,
 }
 
 bool BlitPass::AddCopy(BufferView source,
+                       std::shared_ptr<DeviceBuffer> destination,
+                       size_t destination_offset,
+                       std::string_view label) {
+  if (!source.GetBuffer()) {
+    VALIDATION_LOG << "Attempted to add a buffer copy with no source.";
+    return false;
+  }
+  if (!destination) {
+    VALIDATION_LOG << "Attempted to add a buffer copy with no destination.";
+    return false;
+  }
+  const Range source_range = source.GetRange();
+  const size_t source_size =
+      source.GetBuffer()->GetDeviceBufferDescriptor().size;
+  if (source_range.offset > source_size ||
+      source_range.length > source_size - source_range.offset) {
+    VALIDATION_LOG << "Attempted to add a buffer copy that reads out of "
+                      "bounds of the source buffer.";
+    return false;
+  }
+  const size_t destination_size = destination->GetDeviceBufferDescriptor().size;
+  if (destination_offset > destination_size ||
+      source_range.length > destination_size - destination_offset) {
+    VALIDATION_LOG << "Attempted to add a buffer copy that writes out of "
+                      "bounds of the destination buffer.";
+    return false;
+  }
+  if (source.GetBuffer() == destination.get() &&
+      source_range.offset < destination_offset + source_range.length &&
+      destination_offset < source_range.offset + source_range.length) {
+    VALIDATION_LOG << "Attempted to add a buffer copy whose source and "
+                      "destination ranges overlap.";
+    return false;
+  }
+  if (source_range.length == 0) {
+    return true;  // Nothing to copy.
+  }
+
+  return OnCopyBufferToBufferCommand(std::move(source), std::move(destination),
+                                     destination_offset, label);
+}
+
+bool BlitPass::AddCopy(BufferView source,
                        std::shared_ptr<Texture> destination,
                        std::optional<IRect> destination_region,
                        std::string_view label,

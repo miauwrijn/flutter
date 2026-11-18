@@ -126,6 +126,22 @@ bool BlitPassGLES::OnCopyTextureToBufferCommand(
 }
 
 // |BlitPass|
+bool BlitPassGLES::OnCopyBufferToBufferCommand(
+    BufferView source,
+    std::shared_ptr<DeviceBuffer> destination,
+    size_t destination_offset,
+    std::string_view label) {
+  auto command = std::make_unique<BlitCopyBufferToBufferCommandGLES>();
+  command->label = label;
+  command->source = std::move(source);
+  command->destination = std::move(destination);
+  command->destination_offset = destination_offset;
+
+  commands_.push_back(std::move(command));
+  return true;
+}
+
+// |BlitPass|
 bool BlitPassGLES::OnCopyBufferToTextureCommand(
     BufferView source,
     std::shared_ptr<Texture> destination,

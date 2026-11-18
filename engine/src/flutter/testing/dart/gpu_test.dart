@@ -3648,4 +3648,196 @@ void main() async {
     final ui.Image image = state.renderTexture.asImage();
     await comparer.addGoldenImage(image, 'flutter_gpu_test_viewport.png');
   }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readBuffer reads host-written bytes back', () async {
+    final gpu.DeviceBuffer buffer = gpu.gpuContext.createDeviceBufferWithCopy(
+      Uint8List.fromList(List<int>.generate(64, (int i) => i)).buffer.asByteData(),
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final Future<ByteData> whole = commandBuffer.readBuffer(wholeBuffer(buffer));
+    final Future<ByteData> range = commandBuffer.readBuffer(
+      gpu.BufferView(buffer, offsetInBytes: 16, lengthInBytes: 8),
+    );
+    final Future<ByteData> empty = commandBuffer.readBuffer(
+      gpu.BufferView(buffer, offsetInBytes: 64, lengthInBytes: 0),
+    );
+    await submitAndWait(commandBuffer);
+
+    expect((await whole).buffer.asUint8List(), List<int>.generate(64, (int i) => i));
+    expect((await range).buffer.asUint8List(), List<int>.generate(8, (int i) => 16 + i));
+    expect((await empty).lengthInBytes, 0);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readBuffer reads a copy made earlier in the CommandBuffer', () async {
+    // A texture-to-buffer copy into a device private buffer only reaches the
+    // CPU through the readback, which has to be ordered after the copy.
+    final gpu.Texture texture = gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 2, 1);
+    texture.overwrite(Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6, 7, 8]).buffer.asByteData());
+    final gpu.DeviceBuffer buffer = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      8,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    commandBuffer.copyTextureToBuffer(gpu.TextureRegion(texture), wholeBuffer(buffer));
+    final Future<ByteData> bytes = commandBuffer.readBuffer(wholeBuffer(buffer));
+    await submitAndWait(commandBuffer);
+
+    expect((await bytes).buffer.asUint8List(), <int>[1, 2, 3, 4, 5, 6, 7, 8]);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readBuffer completes without a submit completion callback', () async {
+    final gpu.DeviceBuffer buffer = gpu.gpuContext.createDeviceBufferWithCopy(
+      Uint8List.fromList(<int>[9, 8, 7, 6]).buffer.asByteData(),
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final Future<ByteData> bytes = commandBuffer.readBuffer(wholeBuffer(buffer));
+    commandBuffer.submit();
+
+    expect((await bytes).buffer.asUint8List(), <int>[9, 8, 7, 6]);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readBuffer validates its arguments and state', () async {
+    final gpu.DeviceBuffer buffer = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.hostVisible,
+      16,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    expect(
+      () => commandBuffer.readBuffer(gpu.BufferView(buffer, offsetInBytes: 8, lengthInBytes: 16)),
+      throwsException,
+    );
+    expect(
+      () => commandBuffer.readBuffer(gpu.BufferView(buffer, offsetInBytes: -1, lengthInBytes: 4)),
+      throwsException,
+    );
+    await submitAndWait(commandBuffer);
+    expect(
+      () => commandBuffer.readBuffer(wholeBuffer(buffer)),
+      throwsA(
+        isA<StateError>().having(
+          (StateError e) => e.message,
+          'message',
+          'CommandBuffer.readBuffer() was called after the CommandBuffer was submitted.',
+        ),
+      ),
+    );
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readTexture reads rendered pixels back', () async {
+    final RenderPassState state = createSimpleRenderPass(clearColor: Colors.red);
+    // Draw a lime triangle over the top half of the red clear color.
+    await drawTriangle(state, Colors.lime);
+    final Future<ByteData> whole = state.commandBuffer.readTexture(
+      gpu.TextureRegion(state.renderTexture),
+    );
+    final Future<ByteData> corner = state.commandBuffer.readTexture(
+      gpu.TextureRegion(state.renderTexture, x: 98, y: 98, width: 2, height: 2),
+    );
+    await submitAndWait(state.commandBuffer);
+
+    final ByteData wholeBytes = await whole;
+    expect(wholeBytes.lengthInBytes, state.renderTexture.width * state.renderTexture.height * 4);
+    // The readback matches what the texture holds when read through an image.
+    final ByteData imageBytes = await readTextureBytes(state.renderTexture);
+    expect(wholeBytes.buffer.asUint8List(), imageBytes.buffer.asUint8List());
+
+    final ByteData cornerBytes = await corner;
+    expect(cornerBytes.lengthInBytes, 2 * 2 * 4);
+    for (var i = 0; i < 4; i++) {
+      expect(cornerBytes.getUint32(i * 4), kRedPixel, reason: 'corner pixel $i');
+    }
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readTexture rejects a mip level other than 0', () async {
+    final gpu.Texture texture = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      4,
+      4,
+      mipLevelCount: 2,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    expect(
+      () => commandBuffer.readTexture(gpu.TextureRegion(texture, mipLevel: 1)),
+      throwsException,
+    );
+    await submitAndWait(commandBuffer);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readBuffer reads what a compute pass wrote', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline scale = await createComputePipeline('ComputeScale');
+    final gpu.DeviceBuffer vertices = gpu.gpuContext.createDeviceBufferWithCopy(
+      float32(<double>[1, 2, 3, 4, 5, 6]),
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+
+    // A read sees exactly the writes recorded before it.
+    final Future<ByteData> before = commandBuffer.readBuffer(wholeBuffer(vertices));
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(scale);
+    computePass.bindStorageBuffer(
+      scale.shader.getStorageBufferSlot('Vertices'),
+      wholeBuffer(vertices),
+    );
+    computePass.dispatch(1);
+    computePass.dispatch(1);
+    final Future<ByteData> after = commandBuffer.readBuffer(wholeBuffer(vertices));
+    expect(() => computePass.dispatch(1), throwsComputePassEndedBy('CommandBuffer.readBuffer()'));
+    // A later pass in the same command buffer is not visible to the read.
+    final gpu.ComputePass laterPass = commandBuffer.createComputePass();
+    laterPass.bindPipeline(scale);
+    laterPass.bindStorageBuffer(
+      scale.shader.getStorageBufferSlot('Vertices'),
+      wholeBuffer(vertices),
+    );
+    laterPass.dispatch(1);
+    final Future<ByteData> last = commandBuffer.readBuffer(
+      gpu.BufferView(vertices, offsetInBytes: 8, lengthInBytes: 8),
+    );
+    await submitAndWait(commandBuffer);
+
+    expect((await before).buffer.asFloat32List(), <double>[1, 2, 3, 4, 5, 6]);
+    expect((await after).buffer.asFloat32List(), <double>[4, 8, 12, 16, 20, 24]);
+    expect((await last).buffer.asFloat32List(), <double>[24, 32]);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('CommandBuffer.readBuffer reads a device private buffer a compute pass wrote', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline scale = await createComputePipeline('ComputeScale');
+    // Device private memory is only reachable from the CPU through copies.
+    // Upload the input through a texture, since the public API has no
+    // buffer-to-buffer copy: three RGBA32F texels hold the six floats and six
+    // zeros.
+    final gpu.Texture staging = gpu.gpuContext.createTexture(
+      gpu.StorageMode.hostVisible,
+      3,
+      1,
+      format: gpu.PixelFormat.r32g32b32a32Float,
+    );
+    staging.overwrite(float32(<double>[1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0]));
+    final gpu.DeviceBuffer vertices = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      48,
+    );
+
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    commandBuffer.copyTextureToBuffer(gpu.TextureRegion(staging), wholeBuffer(vertices));
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(scale);
+    computePass.bindStorageBuffer(
+      scale.shader.getStorageBufferSlot('Vertices'),
+      gpu.BufferView(vertices, offsetInBytes: 0, lengthInBytes: 24),
+    );
+    computePass.dispatch(1);
+    final Future<ByteData> bytes = commandBuffer.readBuffer(
+      gpu.BufferView(vertices, offsetInBytes: 0, lengthInBytes: 24),
+    );
+    await submitAndWait(commandBuffer);
+
+    expect((await bytes).buffer.asFloat32List(), <double>[2, 4, 6, 8, 10, 12]);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
 }

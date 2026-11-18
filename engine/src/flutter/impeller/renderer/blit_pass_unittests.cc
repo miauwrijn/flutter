@@ -7,6 +7,7 @@
 #include "flutter/impeller/display_list/aiks_unittests.h"
 #include "flutter/impeller/display_list/dl_image_impeller.h"
 #include "fml/mapping.h"
+#include "fml/synchronization/waitable_event.h"
 #include "gtest/gtest.h"
 #include "impeller/base/validation.h"
 #include "impeller/core/device_buffer.h"
@@ -267,6 +268,111 @@ TEST_P(BlitPassTest, CanResizeTexturesPlayground) {
   builder.DrawImage(image, flutter::DlPoint(100.0, 100.0),
                     DlImageSampling::kNearestNeighbor, &paint);
   ASSERT_TRUE(OpenPlaygroundHere(builder.Build()));
+}
+
+namespace {
+
+std::shared_ptr<DeviceBuffer> CreateBuffer(
+    const std::shared_ptr<Context>& context,
+    StorageMode storage_mode,
+    size_t size,
+    bool readback = false) {
+  DeviceBufferDescriptor desc;
+  desc.storage_mode = storage_mode;
+  desc.size = size;
+  desc.readback = readback;
+  return context->GetResourceAllocator()->CreateBuffer(desc);
+}
+
+}  // namespace
+
+TEST_P(BlitPassTest, CanCopyBufferToBufferForReadback) {
+  auto context = GetContext();
+
+  constexpr size_t kSize = 256;
+  std::vector<uint8_t> bytes(kSize);
+  for (size_t i = 0; i < kSize; i++) {
+    bytes[i] = static_cast<uint8_t>(i);
+  }
+  auto source = context->GetResourceAllocator()->CreateBufferWithCopy(
+      fml::DataMapping(bytes));
+  // Copy through a device private buffer, so the bytes only reach the host
+  // through the copies, and through two copies in one pass, so the second
+  // copy has to be ordered after the first.
+  auto device_private =
+      CreateBuffer(context, StorageMode::kDevicePrivate, kSize);
+  auto readback = CreateBuffer(context, StorageMode::kHostVisible,
+                               /*size=*/kSize, /*readback=*/true);
+  ASSERT_TRUE(source);
+  ASSERT_TRUE(device_private);
+  ASSERT_TRUE(readback);
+
+  auto cmd_buffer = context->CreateCommandBuffer();
+  auto blit_pass = cmd_buffer->CreateBlitPass();
+  // Copy the second half of the source to the start of the device private
+  // buffer and the first half after it, to check offsets.
+  EXPECT_TRUE(blit_pass->AddCopy(
+      BufferView(source, Range{kSize / 2, kSize / 2}), device_private,
+      /*destination_offset=*/0));
+  EXPECT_TRUE(blit_pass->AddCopy(BufferView(source, Range{0, kSize / 2}),
+                                 device_private,
+                                 /*destination_offset=*/kSize / 2));
+  EXPECT_TRUE(blit_pass->AddCopy(BufferView(device_private, Range{0, kSize}),
+                                 readback));
+  EXPECT_TRUE(blit_pass->EncodeCommands());
+
+  fml::AutoResetWaitableEvent latch;
+  CommandBuffer::Status result = CommandBuffer::Status::kPending;
+  ASSERT_TRUE(context->GetCommandQueue()
+                  ->Submit({cmd_buffer},
+                           [&latch, &result](CommandBuffer::Status status) {
+                             result = status;
+                             latch.Signal();
+                           })
+                  .ok());
+  latch.Wait();
+  ASSERT_EQ(result, CommandBuffer::Status::kCompleted);
+
+  readback->Invalidate();
+  const uint8_t* contents = readback->OnGetContents();
+  ASSERT_NE(contents, nullptr);
+  for (size_t i = 0; i < kSize; i++) {
+    ASSERT_EQ(contents[i], static_cast<uint8_t>((i + kSize / 2) % kSize))
+        << "at byte " << i;
+  }
+}
+
+TEST_P(BlitPassTest, BufferToBufferCopyChecksBounds) {
+  auto context = GetContext();
+  auto source = CreateBuffer(context, StorageMode::kHostVisible, 64);
+  auto destination = CreateBuffer(context, StorageMode::kHostVisible, 32);
+  ASSERT_TRUE(source);
+  ASSERT_TRUE(destination);
+
+  auto cmd_buffer = context->CreateCommandBuffer();
+  auto blit_pass = cmd_buffer->CreateBlitPass();
+
+  ScopedValidationDisable scoped;
+  // Reads past the end of the source.
+  EXPECT_FALSE(
+      blit_pass->AddCopy(BufferView(source, Range{48, 32}), destination));
+  // Writes past the end of the destination.
+  EXPECT_FALSE(blit_pass->AddCopy(BufferView(source, Range{0, 32}), destination,
+                                  /*destination_offset=*/16));
+  // Overlapping ranges of the same buffer.
+  EXPECT_FALSE(blit_pass->AddCopy(BufferView(source, Range{0, 32}), source,
+                                  /*destination_offset=*/16));
+  // No destination.
+  EXPECT_FALSE(blit_pass->AddCopy(BufferView(source, Range{0, 32}),
+                                  std::shared_ptr<DeviceBuffer>()));
+
+  // In bounds, including disjoint ranges of one buffer and an empty copy.
+  EXPECT_TRUE(
+      blit_pass->AddCopy(BufferView(source, Range{0, 32}), destination));
+  EXPECT_TRUE(blit_pass->AddCopy(BufferView(source, Range{0, 32}), source,
+                                 /*destination_offset=*/32));
+  EXPECT_TRUE(
+      blit_pass->AddCopy(BufferView(source, Range{64, 0}), destination));
 }
 
 }  // namespace testing

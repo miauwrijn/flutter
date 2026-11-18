@@ -28,6 +28,26 @@
 
 namespace impeller {
 
+namespace {
+
+// Managed buffers keep separate CPU and GPU copies, so GPU writes must be
+// synchronized back before the CPU reads them. Only buffers allocated for
+// readback are synchronized, since that is the only case where the CPU reads
+// what the GPU wrote. Shared buffers need nothing. Managed storage does not
+// exist on iOS.
+void SynchronizeForReadbackIfNeeded(id<MTLBlitCommandEncoder> encoder,
+                                    const DeviceBuffer& destination,
+                                    id<MTLBuffer> destination_mtl) {
+#if !FML_OS_IOS
+  if (destination.GetDeviceBufferDescriptor().readback &&
+      destination_mtl.storageMode == MTLStorageModeManaged) {
+    [encoder synchronizeResource:destination_mtl];
+  }
+#endif  // !FML_OS_IOS
+}
+
+}  // namespace
+
 BlitPassMTL::BlitPassMTL(id<MTLCommandBuffer> buffer, id<MTLDevice> device)
     : buffer_(buffer), device_(device) {
   if (!buffer_) {
@@ -176,6 +196,43 @@ bool BlitPassMTL::OnCopyTextureToBufferCommand(
              destinationOffset:destination_offset
         destinationBytesPerRow:destination_bytes_per_row
       destinationBytesPerImage:destination_bytes_per_image];
+  SynchronizeForReadbackIfNeeded(encoder_, *destination, destination_mtl);
+
+#ifdef IMPELLER_DEBUG
+  if (is_metal_trace_active_) {
+    [encoder_ popDebugGroup];
+  }
+#endif  // IMPELLER_DEBUG
+  return true;
+}
+
+// |BlitPass|
+bool BlitPassMTL::OnCopyBufferToBufferCommand(
+    BufferView source,
+    std::shared_ptr<DeviceBuffer> destination,
+    size_t destination_offset,
+    std::string_view label) {
+  auto source_mtl = DeviceBufferMTL::Cast(*source.GetBuffer()).GetMTLBuffer();
+  if (!source_mtl) {
+    return false;
+  }
+
+  auto destination_mtl = DeviceBufferMTL::Cast(*destination).GetMTLBuffer();
+  if (!destination_mtl) {
+    return false;
+  }
+
+#ifdef IMPELLER_DEBUG
+  if (is_metal_trace_active_) {
+    [encoder_ pushDebugGroup:@(label.data())];
+  }
+#endif  // IMPELLER_DEBUG
+  [encoder_ copyFromBuffer:source_mtl
+              sourceOffset:source.GetRange().offset
+                  toBuffer:destination_mtl
+         destinationOffset:destination_offset
+                      size:source.GetRange().length];
+  SynchronizeForReadbackIfNeeded(encoder_, *destination, destination_mtl);
 
 #ifdef IMPELLER_DEBUG
   if (is_metal_trace_active_) {

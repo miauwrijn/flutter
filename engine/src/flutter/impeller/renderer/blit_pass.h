@@ -97,6 +97,32 @@ class BlitPass {
                std::string_view label = "");
 
   //----------------------------------------------------------------------------
+  /// @brief      Record a command to copy a range of one buffer into another
+  ///             buffer.
+  ///
+  ///             The copy is ordered after the commands recorded before it on
+  ///             the same command buffer, including earlier copies in this
+  ///             pass. If [destination] was allocated with
+  ///             `DeviceBufferDescriptor::readback`, the copied bytes are
+  ///             visible to the host once the command buffer completes, after
+  ///             calling `DeviceBuffer::Invalidate` on it.
+  ///
+  /// @param[in]  source              The buffer range to read for copying.
+  /// @param[in]  destination         The buffer to overwrite using the source
+  ///                                 contents.
+  /// @param[in]  destination_offset  The byte offset in [destination] to start
+  ///                                 writing to.
+  /// @param[in]  label               The optional debug label to give the
+  ///                                 command.
+  ///
+  /// @return     If the command was valid for subsequent commitment.
+  ///
+  bool AddCopy(BufferView source,
+               std::shared_ptr<DeviceBuffer> destination,
+               size_t destination_offset = 0,
+               std::string_view label = "");
+
+  //----------------------------------------------------------------------------
   /// @brief      Record a command to copy the contents of a buffer to a
   ///             texture.
   ///
@@ -167,6 +193,12 @@ class BlitPass {
       std::shared_ptr<Texture> source,
       std::shared_ptr<DeviceBuffer> destination,
       IRect source_region,
+      size_t destination_offset,
+      std::string_view label) = 0;
+
+  virtual bool OnCopyBufferToBufferCommand(
+      BufferView source,
+      std::shared_ptr<DeviceBuffer> destination,
       size_t destination_offset,
       std::string_view label) = 0;
 

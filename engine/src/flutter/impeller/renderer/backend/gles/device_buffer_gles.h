@@ -32,6 +32,14 @@ class DeviceBufferGLES final
   void UpdateBufferData(
       const std::function<void(uint8_t*, size_t length)>& update_buffer_data);
 
+  /// Copies [source_range] of [source] into the shadow copy at [offset] and
+  /// marks that range dirty. Unlike `CopyHostBuffer`, this works for every
+  /// storage mode, since the shadow copy exists for all of them. Used by
+  /// blits, which run on the reactor.
+  [[nodiscard]] bool WriteBufferData(const uint8_t* source,
+                                     Range source_range,
+                                     size_t offset);
+
   enum class BindingType {
     kArrayBuffer,
     kElementArrayBuffer,
