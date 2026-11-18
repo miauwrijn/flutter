@@ -248,6 +248,49 @@ TEST(FlutterGpuShaderLibraryTest, MakeFromFlatbufferSkipsOptimizedOutStruct) {
   EXPECT_EQ(shader->GetUniformStruct("Dced"), nullptr);
 }
 
+// An OpenGL backend loads the ES variant of each shader, or the desktop
+// variant on a desktop OpenGL context. Each variant here declares a
+// differently named texture, so the test can tell which one was loaded.
+TEST(FlutterGpuShaderLibraryTest, OpenGLPicksTheVariantForTheContext) {
+  namespace fbs = impeller::fb::shaderbundle;
+  auto make_variant = [](const std::string& texture_name) {
+    auto variant = std::make_unique<fbs::BackendShaderT>();
+    variant->stage = fbs::ShaderStage::kFragment;
+    variant->entrypoint = "main";
+    variant->shader = {'v', 'o', 'i', 'd'};
+    auto texture = std::make_unique<fbs::ShaderUniformTextureT>();
+    texture->name = texture_name;
+    variant->uniform_textures.push_back(std::move(texture));
+    return variant;
+  };
+  auto shader = std::make_unique<fbs::ShaderT>();
+  shader->name = "test";
+  shader->opengl_es = make_variant("es_texture");
+  shader->opengl_desktop = make_variant("desktop_texture");
+  fbs::ShaderBundleT bundle;
+  bundle.format_version =
+      static_cast<uint32_t>(fbs::ShaderBundleFormatVersion::kVersion);
+  bundle.shaders.push_back(std::move(shader));
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(fbs::ShaderBundle::Pack(builder, &bundle),
+                 fbs::ShaderBundleIdentifier());
+  auto bytes = std::make_shared<std::vector<uint8_t>>(
+      builder.GetBufferPointer(),
+      builder.GetBufferPointer() + builder.GetSize());
+
+  for (const bool desktop_gl : {false, true}) {
+    auto library = ShaderLibrary::MakeFromFlatbuffer(
+        impeller::Context::BackendType::kOpenGLES,
+        CreateMappingFromVector(bytes), "test_bundle", desktop_gl);
+    ASSERT_TRUE(library);
+    auto loaded = library->FindShaderForTesting("test");
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(loaded->GetUniformTexture("es_texture") != nullptr, !desktop_gl);
+    EXPECT_EQ(loaded->GetUniformTexture("desktop_texture") != nullptr,
+              desktop_gl);
+  }
+}
+
 struct StorageBufferDescription {
   std::string name;
   uint64_t ext_res_0 = 0;

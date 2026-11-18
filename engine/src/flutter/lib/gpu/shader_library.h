@@ -25,10 +25,13 @@ class ShaderLibrary : public RefCountedDartWrappable<ShaderLibrary> {
  public:
   using ShaderMap = std::unordered_map<std::string, fml::RefPtr<Shader>>;
 
+  /// [desktop_gl] selects the desktop OpenGL variant of each shader instead
+  /// of the OpenGL ES one, for an OpenGL backend on a desktop GL context.
   static fml::RefPtr<ShaderLibrary> MakeFromAsset(
       impeller::Context::BackendType backend_type,
       const std::string& name,
-      std::string& out_error);
+      std::string& out_error,
+      bool desktop_gl = false);
 
   static fml::RefPtr<ShaderLibrary> MakeFromShaders(ShaderMap shaders);
 
@@ -40,7 +43,8 @@ class ShaderLibrary : public RefCountedDartWrappable<ShaderLibrary> {
   static fml::RefPtr<ShaderLibrary> MakeFromFlatbuffer(
       impeller::Context::BackendType backend_type,
       std::shared_ptr<fml::Mapping> payload,
-      std::string library_id = "");
+      std::string library_id = "",
+      bool desktop_gl = false);
 
   /// Sets a return override for `MakeFromAsset` for testing purposes.
   static void SetOverride(fml::RefPtr<ShaderLibrary> override_shader_library);
@@ -52,12 +56,14 @@ class ShaderLibrary : public RefCountedDartWrappable<ShaderLibrary> {
   /// place and marked dirty so the next pipeline build evicts and
   /// re-registers them. Returns the empty string on success.
   std::string ReloadFromAsset(impeller::Context::BackendType backend_type,
-                              const std::string& name);
+                              const std::string& name,
+                              bool desktop_gl = false);
 
   /// Reparses `payload` into this library, preserving Dart object identity
   /// and the `library_id`. Returns the empty string on success.
   std::string ReloadFromFlatbuffer(impeller::Context::BackendType backend_type,
-                                   std::shared_ptr<fml::Mapping> payload);
+                                   std::shared_ptr<fml::Mapping> payload,
+                                   bool desktop_gl = false);
 
   fml::RefPtr<Shader> GetShader(const std::string& shader_name,
                                 Dart_Handle shader_wrapper);

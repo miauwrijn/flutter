@@ -4,6 +4,10 @@
 
 #include "flutter/lib/gpu/context.h"
 
+#if IMPELLER_ENABLE_OPENGLES
+#include "impeller/renderer/backend/gles/capabilities_gles.h"  // nogncheck
+#endif  // IMPELLER_ENABLE_OPENGLES
+
 #include <future>
 
 #include "flutter/lib/gpu/formats.h"
@@ -33,6 +37,17 @@ bool SupportsCompute(const impeller::Context& context) {
       // OpenGL ES 3.1 or OpenGL 4.3.
       return context.GetCapabilities()->SupportsCompute();
   }
+  return false;
+}
+
+bool IsDesktopGL(const impeller::Context& context) {
+#if IMPELLER_ENABLE_OPENGLES
+  if (context.GetBackendType() == impeller::Context::BackendType::kOpenGLES) {
+    return !static_cast<const impeller::CapabilitiesGLES&>(
+                *context.GetCapabilities())
+                .IsES();
+  }
+#endif  // IMPELLER_ENABLE_OPENGLES
   return false;
 }
 

@@ -4,6 +4,8 @@
 
 #include "flutter/lib/gpu/shader_library.h"
 
+#include "flutter/lib/gpu/context.h"
+
 #include <array>
 #include <memory>
 #include <optional>
@@ -33,7 +35,8 @@ fml::RefPtr<ShaderLibrary> ShaderLibrary::override_shader_library_;
 fml::RefPtr<ShaderLibrary> ShaderLibrary::MakeFromAsset(
     impeller::Context::BackendType backend_type,
     const std::string& name,
-    std::string& out_error) {
+    std::string& out_error,
+    bool desktop_gl) {
   if (override_shader_library_) {
     return override_shader_library_;
   }
@@ -48,7 +51,7 @@ fml::RefPtr<ShaderLibrary> ShaderLibrary::MakeFromAsset(
     return nullptr;
   }
 
-  return MakeFromFlatbuffer(backend_type, std::move(data), name);
+  return MakeFromFlatbuffer(backend_type, std::move(data), name, desktop_gl);
 }
 
 fml::RefPtr<ShaderLibrary> ShaderLibrary::MakeFromShaders(ShaderMap shaders) {
@@ -189,6 +192,7 @@ static size_t SizeOfInputType(
 
 static const impeller::fb::shaderbundle::BackendShader* GetShaderBackend(
     impeller::Context::BackendType backend_type,
+    bool desktop_gl,
     const impeller::fb::shaderbundle::Shader* shader) {
   switch (backend_type) {
     case impeller::Context::BackendType::kMetal:
@@ -198,7 +202,9 @@ static const impeller::fb::shaderbundle::BackendShader* GetShaderBackend(
       return shader->metal_desktop();
 #endif
     case impeller::Context::BackendType::kOpenGLES:
-      return shader->opengl_es();
+      // A desktop OpenGL context, from a custom embedder, compiles the
+      // desktop variant; OpenGL ES and ANGLE compile the ES one.
+      return desktop_gl ? shader->opengl_desktop() : shader->opengl_es();
     case impeller::Context::BackendType::kVulkan:
       return shader->vulkan();
   }
@@ -207,7 +213,8 @@ static const impeller::fb::shaderbundle::BackendShader* GetShaderBackend(
 static ShaderLibrary::ShaderMap ParseShaderBundle(
     impeller::Context::BackendType backend_type,
     const std::shared_ptr<fml::Mapping>& payload,
-    const std::string& library_id) {
+    const std::string& library_id,
+    bool desktop_gl) {
   ShaderLibrary::ShaderMap shader_map;
   if (payload == nullptr || !payload->GetMapping()) {
     return shader_map;
@@ -255,7 +262,7 @@ static ShaderLibrary::ShaderMap ParseShaderBundle(
 
   for (const auto* bundled_shader : *bundle->shaders()) {
     const impeller::fb::shaderbundle::BackendShader* backend_shader =
-        GetShaderBackend(backend_type, bundled_shader);
+        GetShaderBackend(backend_type, desktop_gl, bundled_shader);
     if (!backend_shader) {
       VALIDATION_LOG << "Failed to unpack shader \""
                      << bundled_shader->name()->c_str() << "\" from bundle.";
@@ -511,14 +518,16 @@ static ShaderLibrary::ShaderMap ParseShaderBundle(
 fml::RefPtr<ShaderLibrary> ShaderLibrary::MakeFromFlatbuffer(
     impeller::Context::BackendType backend_type,
     std::shared_ptr<fml::Mapping> payload,
-    std::string library_id) {
+    std::string library_id,
+    bool desktop_gl) {
   if (payload == nullptr || !payload->GetMapping()) {
     return nullptr;
   }
   if (library_id.empty()) {
     library_id = impeller::ShaderKey::MakeFallbackLibraryId();
   }
-  ShaderMap shader_map = ParseShaderBundle(backend_type, payload, library_id);
+  ShaderMap shader_map =
+      ParseShaderBundle(backend_type, payload, library_id, desktop_gl);
   if (shader_map.empty()) {
     return nullptr;
   }
@@ -528,7 +537,8 @@ fml::RefPtr<ShaderLibrary> ShaderLibrary::MakeFromFlatbuffer(
 
 std::string ShaderLibrary::ReloadFromAsset(
     impeller::Context::BackendType backend_type,
-    const std::string& name) {
+    const std::string& name,
+    bool desktop_gl) {
   auto dart_state = UIDartState::Current();
   std::shared_ptr<AssetManager> asset_manager =
       dart_state->platform_configuration()->client()->GetAssetManager();
@@ -537,16 +547,18 @@ std::string ShaderLibrary::ReloadFromAsset(
   if (data == nullptr) {
     return "Asset '" + name + "' not found.";
   }
-  return ReloadFromFlatbuffer(backend_type, std::move(data));
+  return ReloadFromFlatbuffer(backend_type, std::move(data), desktop_gl);
 }
 
 std::string ShaderLibrary::ReloadFromFlatbuffer(
     impeller::Context::BackendType backend_type,
-    std::shared_ptr<fml::Mapping> payload) {
+    std::shared_ptr<fml::Mapping> payload,
+    bool desktop_gl) {
   if (payload == nullptr || !payload->GetMapping()) {
     return "Empty shader bundle payload.";
   }
-  ShaderMap new_shaders = ParseShaderBundle(backend_type, payload, library_id_);
+  ShaderMap new_shaders =
+      ParseShaderBundle(backend_type, payload, library_id_, desktop_gl);
   if (new_shaders.empty()) {
     return "Shader bundle could not be parsed.";
   }
@@ -649,7 +661,7 @@ Dart_Handle InternalFlutterGpu_ShaderLibrary_InitializeWithAsset(
   std::string error;
   auto res = flutter::gpu::ShaderLibrary::MakeFromAsset(
       impeller_context->GetBackendType(), tonic::StdStringFromDart(asset_name),
-      error);
+      error, flutter::gpu::IsDesktopGL(*impeller_context));
   if (!res) {
     return tonic::ToDart(error);
   }
@@ -671,7 +683,8 @@ Dart_Handle InternalFlutterGpu_ShaderLibrary_ReinitializeWithAsset(
   }
 
   std::string error = wrapper->ReloadFromAsset(
-      impeller_context->GetBackendType(), tonic::StdStringFromDart(asset_name));
+      impeller_context->GetBackendType(), tonic::StdStringFromDart(asset_name),
+      flutter::gpu::IsDesktopGL(*impeller_context));
   if (!error.empty()) {
     return tonic::ToDart(error);
   }
@@ -694,7 +707,8 @@ Dart_Handle InternalFlutterGpu_ShaderLibrary_InitializeWithBytes(
   }
 
   auto res = flutter::gpu::ShaderLibrary::MakeFromFlatbuffer(
-      impeller_context->GetBackendType(), std::move(payload));
+      impeller_context->GetBackendType(), std::move(payload),
+      /*library_id=*/"", flutter::gpu::IsDesktopGL(*impeller_context));
   if (!res) {
     return tonic::ToDart(
         "Failed to parse the shader bundle bytes. The bytes must be a shader "
@@ -720,7 +734,8 @@ Dart_Handle InternalFlutterGpu_ShaderLibrary_ReinitializeWithBytes(
   }
 
   std::string error = wrapper->ReloadFromFlatbuffer(
-      impeller_context->GetBackendType(), std::move(payload));
+      impeller_context->GetBackendType(), std::move(payload),
+      flutter::gpu::IsDesktopGL(*impeller_context));
   if (!error.empty()) {
     return tonic::ToDart(error);
   }

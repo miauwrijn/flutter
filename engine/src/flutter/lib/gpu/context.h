@@ -23,6 +23,11 @@ bool SupportsNormalOffscreenMSAA(const impeller::Context& context);
 /// Flutter GPU implements its whole compute contract on the backend.
 bool SupportsCompute(const impeller::Context& context);
 
+/// Whether [context] is an OpenGL backend on a desktop OpenGL context, as
+/// opposed to OpenGL ES or ANGLE. Shader bundles carry a separate variant for
+/// it.
+bool IsDesktopGL(const impeller::Context& context);
+
 class Context : public RefCountedDartWrappable<Context> {
   DEFINE_WRAPPERTYPEINFO();
   FML_FRIEND_MAKE_REF_COUNTED(Context);
