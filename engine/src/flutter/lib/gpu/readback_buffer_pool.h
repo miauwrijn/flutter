@@ -33,8 +33,7 @@ class ReadbackBufferPool {
   static constexpr size_t kMaxBuffersPerBucket = 4u;
   static constexpr size_t kDefaultMaxPooledBytes = 8u * 1024u * 1024u;
 
-  explicit ReadbackBufferPool(
-      size_t max_pooled_bytes = kDefaultMaxPooledBytes);
+  explicit ReadbackBufferPool(size_t max_pooled_bytes = kDefaultMaxPooledBytes);
 
   ~ReadbackBufferPool();
 
