@@ -135,6 +135,11 @@ class IMockGLESImpl {
                                GLuint num_groups_y,
                                GLuint num_groups_z) {}
   virtual void MemoryBarrier(GLbitfield barriers) {}
+  virtual GLenum ClientWaitSync(GLsync sync,
+                                GLbitfield flags,
+                                GLuint64 timeout) {
+    return GL_ALREADY_SIGNALED;
+  }
   virtual void* MapBufferRange(GLenum target,
                                GLintptr offset,
                                GLsizeiptr length,

@@ -32,9 +32,9 @@ std::shared_ptr<ComputePipelineGLES> ComputePipelineGLES::Create(
     const ComputePipelineDescriptor& desc,
     std::shared_ptr<UniqueHandleGLES> handle,
     std::unique_ptr<BufferBindingsGLES> buffer_bindings) {
-  auto pipeline = std::shared_ptr<ComputePipelineGLES>(new ComputePipelineGLES(
-      std::move(reactor), std::move(library), desc, std::move(handle),
-      std::move(buffer_bindings)));
+  auto pipeline = std::shared_ptr<ComputePipelineGLES>(
+      new ComputePipelineGLES(std::move(reactor), std::move(library), desc,
+                              std::move(handle), std::move(buffer_bindings)));
   if (!pipeline->IsValid()) {
     return nullptr;
   }

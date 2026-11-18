@@ -69,25 +69,24 @@ void ExpectComputeLimitQueries(MockGLESImpl& impl) {
       .WillByDefault([](GLenum, GLuint index, GLint* data) {
         *data = index == 2 ? 64 : 128;
       });
-  ON_CALL(impl, GetIntegerv(_, _))
-      .WillByDefault([](GLenum name, GLint* value) {
-        switch (name) {
-          case GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS:
-            *value = 128;
-            break;
-          case GL_MAX_COMPUTE_SHARED_MEMORY_SIZE:
-            *value = 16384;
-            break;
-          case GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS:
-            *value = 4;
-            break;
-          case GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT:
-            *value = 512;
-            break;
-          default:
-            break;
-        }
-      });
+  ON_CALL(impl, GetIntegerv(_, _)).WillByDefault([](GLenum name, GLint* value) {
+    switch (name) {
+      case GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS:
+        *value = 128;
+        break;
+      case GL_MAX_COMPUTE_SHARED_MEMORY_SIZE:
+        *value = 16384;
+        break;
+      case GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS:
+        *value = 4;
+        break;
+      case GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT:
+        *value = 512;
+        break;
+      default:
+        break;
+    }
+  });
 }
 
 }  // namespace
@@ -111,8 +110,7 @@ TEST(ComputeGLESTest, CapabilitiesReportComputeOnOpenGLES31) {
   EXPECT_EQ(limits.max_workgroup_count,
             (std::array<uint32_t, 3>{65535u, 65534u, 65533u}));
   EXPECT_EQ(limits.max_shared_memory_size, 16384u);
-  EXPECT_EQ(capabilities->GetMaxShaderStorageBlocks(ShaderStage::kCompute),
-            4u);
+  EXPECT_EQ(capabilities->GetMaxShaderStorageBlocks(ShaderStage::kCompute), 4u);
   // The larger of the uniform alignment (256) and the storage alignment.
   EXPECT_EQ(capabilities->GetMinimumStorageBufferAlignment(), 512u);
 }
@@ -145,29 +143,28 @@ TEST(ComputeGLESTest, StorageBuffersBindToTheShaderBindingByName) {
       .WillByDefault(
           [](GLuint, GLenum, GLenum, GLint* params) { *params = 16; });
   ON_CALL(*impl, GetProgramResourceName(_, GL_SHADER_STORAGE_BLOCK, 0, _, _, _))
-      .WillByDefault([](GLuint, GLenum, GLuint, GLsizei, GLsizei* length,
-                        GLchar* name) {
-        std::strcpy(name, "Vertices");
-        *length = 8;
-      });
-  ON_CALL(*impl, GetProgramResourceiv(_, GL_SHADER_STORAGE_BLOCK, 0, 1, _, 1,
-                                      _, _))
+      .WillByDefault(
+          [](GLuint, GLenum, GLuint, GLsizei, GLsizei* length, GLchar* name) {
+            std::strcpy(name, "Vertices");
+            *length = 8;
+          });
+  ON_CALL(*impl,
+          GetProgramResourceiv(_, GL_SHADER_STORAGE_BLOCK, 0, 1, _, 1, _, _))
       .WillByDefault([](GLuint, GLenum, GLuint, GLsizei, const GLenum* props,
                         GLsizei, GLsizei*, GLint* params) {
         EXPECT_EQ(props[0], static_cast<GLenum>(GL_BUFFER_BINDING));
         *params = 3;
       });
   // Only the declared storage block binds, at the shader's binding point.
-  EXPECT_CALL(*impl,
-              BindBufferRange(GL_SHADER_STORAGE_BUFFER, 3, _, 256, 16))
+  EXPECT_CALL(*impl, BindBufferRange(GL_SHADER_STORAGE_BUFFER, 3, _, 256, 16))
       .Times(1);
   std::shared_ptr<MockGLES> mock_gl =
       MockGLES::Init(std::move(impl), std::nullopt, "OpenGL ES 3.1");
   std::shared_ptr<ReactorGLES> reactor = CreateReactor();
 
   BufferBindingsGLES bindings;
-  ASSERT_TRUE(
-      bindings.ReadStorageBlockBindings(mock_gl->GetProcTable(), /*program=*/1));
+  ASSERT_TRUE(bindings.ReadStorageBlockBindings(mock_gl->GetProcTable(),
+                                                /*program=*/1));
 
   std::unique_ptr<DeviceBufferGLES> buffer = CreateBuffer(reactor, 512);
   ASSERT_TRUE(buffer);
@@ -196,8 +193,7 @@ TEST(ComputeGLESTest, GPUWrittenBuffersReadBackIntoTheShadowCopy) {
     EXPECT_CALL(*impl, BufferSubData(_, 0, 8, _)).Times(1);
     // A host write made while the buffer is GPU-written is uploaded before
     // the buffer is read back, so the read returns it.
-    EXPECT_CALL(*impl, BufferSubData(GL_COPY_READ_BUFFER, 0, 2, _))
-        .Times(1);
+    EXPECT_CALL(*impl, BufferSubData(GL_COPY_READ_BUFFER, 0, 2, _)).Times(1);
     EXPECT_CALL(*impl,
                 MapBufferRange(GL_COPY_READ_BUFFER, 0, 8, GL_MAP_READ_BIT))
         .WillOnce(Return(gpu_contents.data()));
@@ -223,8 +219,7 @@ TEST(ComputeGLESTest, GPUWrittenBuffersReadBackIntoTheShadowCopy) {
 
   const uint8_t* contents = buffer->GetBufferData();
   EXPECT_FALSE(buffer->IsWrittenByGPU());
-  EXPECT_EQ(std::memcmp(contents, gpu_contents.data(), gpu_contents.size()),
-            0);
+  EXPECT_EQ(std::memcmp(contents, gpu_contents.data(), gpu_contents.size()), 0);
   // The shadow copy is current again, so a second read does not map.
   buffer->GetBufferData();
 }

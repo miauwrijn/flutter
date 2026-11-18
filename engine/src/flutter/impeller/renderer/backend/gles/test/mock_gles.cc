@@ -318,6 +318,17 @@ void mockDispatchCompute(GLuint num_groups_x,
 static_assert(CheckSameSignature<decltype(mockDispatchCompute),  //
                                  decltype(glDispatchCompute)>::value);
 
+GLenum mockClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout) {
+  if (auto mock_gles = g_mock_gles.lock()) {
+    if (mock_gles->GetImpl()) {
+      return mock_gles->GetImpl()->ClientWaitSync(sync, flags, timeout);
+    }
+  }
+  return GL_ALREADY_SIGNALED;
+}
+static_assert(CheckSameSignature<decltype(mockClientWaitSync),  //
+                                 decltype(glClientWaitSync)>::value);
+
 void mockMemoryBarrier(GLbitfield barriers) {
   CallMockMethod(&IMockGLESImpl::MemoryBarrier, barriers);
 }
@@ -862,6 +873,8 @@ const ProcTableGLES::Resolver kMockResolverGLES = [](const char* name) {
     return reinterpret_cast<void*>(mockDispatchCompute);
   } else if (strcmp(name, "glMemoryBarrier") == 0) {
     return reinterpret_cast<void*>(mockMemoryBarrier);
+  } else if (strcmp(name, "glClientWaitSync") == 0) {
+    return reinterpret_cast<void*>(mockClientWaitSync);
   } else if (strcmp(name, "glMapBufferRange") == 0) {
     return reinterpret_cast<void*>(mockMapBufferRange);
   } else if (strcmp(name, "glUnmapBuffer") == 0) {

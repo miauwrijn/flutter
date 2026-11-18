@@ -234,5 +234,97 @@ TEST(CommandBufferGLES, BufferToTextureBlitCanBeSubmittedBeforeContextCurrent) {
   EXPECT_TRUE(texture_uploaded);
 }
 
+namespace {
+
+// Reports a fence as unsignaled [timeouts] times, then as [final_result].
+class FenceMockGLESImpl : public NiceMock<MockGLESImpl> {
+ public:
+  FenceMockGLESImpl(int timeouts, GLenum final_result)
+      : timeouts_(timeouts), final_result_(final_result) {}
+
+  GLenum ClientWaitSync(GLsync sync,
+                        GLbitfield flags,
+                        GLuint64 timeout) override {
+    waits_.push_back(flags);
+    if (timeouts_ > 0) {
+      timeouts_--;
+      return GL_TIMEOUT_EXPIRED;
+    }
+    return final_result_;
+  }
+
+  const std::vector<GLbitfield>& GetWaits() const { return waits_; }
+
+ private:
+  int timeouts_;
+  GLenum final_result_;
+  std::vector<GLbitfield> waits_;
+};
+
+}  // namespace
+
+TEST(CommandBufferGLES, CompletionCallbackWaitsForTheGPU) {
+  auto impl = std::make_unique<FenceMockGLESImpl>(/*timeouts=*/2,
+                                                  GL_CONDITION_SATISFIED);
+  FenceMockGLESImpl* impl_ptr = impl.get();
+  auto mock_gles = MockGLES::Init(std::move(impl));
+  auto context = CreateFakeGLESContext();
+  auto context_base = std::static_pointer_cast<Context>(context);
+  auto worker = std::make_shared<ToggleWorker>(true);
+  context->AddReactorWorker(worker);
+
+  auto command_buffer = context_base->CreateCommandBuffer();
+  ASSERT_TRUE(command_buffer);
+  CommandBuffer::Status callback_status = CommandBuffer::Status::kPending;
+  ASSERT_TRUE(context_base->GetCommandQueue()
+                  ->Submit({command_buffer},
+                           [&](CommandBuffer::Status status) {
+                             callback_status = status;
+                           })
+                  .ok());
+
+  EXPECT_EQ(callback_status, CommandBuffer::Status::kCompleted);
+  // The first wait flushes so the fence is guaranteed to signal.
+  ASSERT_EQ(impl_ptr->GetWaits().size(), 3u);
+  EXPECT_EQ(impl_ptr->GetWaits()[0],
+            static_cast<GLbitfield>(GL_SYNC_FLUSH_COMMANDS_BIT));
+  EXPECT_EQ(impl_ptr->GetWaits()[1], 0u);
+}
+
+TEST(CommandBufferGLES, CompletionCallbackReportsAFailedGPUWait) {
+  auto impl =
+      std::make_unique<FenceMockGLESImpl>(/*timeouts=*/0, GL_WAIT_FAILED);
+  auto mock_gles = MockGLES::Init(std::move(impl));
+  auto context = CreateFakeGLESContext();
+  auto context_base = std::static_pointer_cast<Context>(context);
+  auto worker = std::make_shared<ToggleWorker>(true);
+  context->AddReactorWorker(worker);
+
+  auto command_buffer = context_base->CreateCommandBuffer();
+  ASSERT_TRUE(command_buffer);
+  CommandBuffer::Status callback_status = CommandBuffer::Status::kPending;
+  (void)context_base->GetCommandQueue()->Submit(
+      {command_buffer},
+      [&](CommandBuffer::Status status) { callback_status = status; });
+
+  EXPECT_EQ(callback_status, CommandBuffer::Status::kError);
+}
+
+TEST(CommandBufferGLES, SubmitWithoutCallbackDoesNotWaitForTheGPU) {
+  auto impl =
+      std::make_unique<FenceMockGLESImpl>(/*timeouts=*/0, GL_ALREADY_SIGNALED);
+  FenceMockGLESImpl* impl_ptr = impl.get();
+  auto mock_gles = MockGLES::Init(std::move(impl));
+  auto context = CreateFakeGLESContext();
+  auto context_base = std::static_pointer_cast<Context>(context);
+  auto worker = std::make_shared<ToggleWorker>(true);
+  context->AddReactorWorker(worker);
+
+  auto command_buffer = context_base->CreateCommandBuffer();
+  ASSERT_TRUE(command_buffer);
+  ASSERT_TRUE(context_base->GetCommandQueue()->Submit({command_buffer}).ok());
+  EXPECT_TRUE(impl_ptr->GetWaits().empty());
+}
+
 }  // namespace testing
 }  // namespace impeller

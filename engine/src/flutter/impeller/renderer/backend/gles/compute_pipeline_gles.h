@@ -44,7 +44,6 @@ class ComputePipelineGLES final
       std::unique_ptr<BufferBindingsGLES> buffer_bindings);
 
  private:
-
   std::shared_ptr<ReactorGLES> reactor_;
   std::shared_ptr<UniqueHandleGLES> handle_;
   std::unique_ptr<BufferBindingsGLES> buffer_bindings_;

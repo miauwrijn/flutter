@@ -185,8 +185,7 @@ bool ComputePassGLES::EncodeDispatchesInReactor(
       break;
     }
 
-    gl.DispatchCompute(dispatch.workgroup_count[0],
-                       dispatch.workgroup_count[1],
+    gl.DispatchCompute(dispatch.workgroup_count[0], dispatch.workgroup_count[1],
                        dispatch.workgroup_count[2]);
     // Make the dispatch's writes visible to the next dispatch and to every
     // later consumer: vertex, index, uniform and indirect reads, texture

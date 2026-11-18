@@ -51,6 +51,41 @@ class DeferredCompletionCallback {
   CommandBuffer::CompletionCallback callback_;
 };
 
+/// Blocks until the GPU finishes the commands the reactor issued so far, so
+/// that a completion callback reports GPU completion rather than the reactor
+/// consuming the commands. Returns false if the wait fails. Contexts without
+/// fences (OpenGL ES 2.0) fall back to glFinish.
+bool WaitForGPU(const ProcTableGLES& gl) {
+  if (!gl.FenceSync.IsAvailable() || !gl.ClientWaitSync.IsAvailable() ||
+      !gl.DeleteSync.IsAvailable()) {
+    gl.Finish();
+    return true;
+  }
+  GLsync fence = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  if (!fence) {
+    gl.Finish();
+    return true;
+  }
+  // Flush on the first wait so the fence is guaranteed to signal, then keep
+  // waiting in bounded steps.
+  constexpr GLuint64 kWaitStepNanoseconds = 1'000'000'000;
+  GLbitfield flags = GL_SYNC_FLUSH_COMMANDS_BIT;
+  bool signaled = false;
+  while (true) {
+    const GLenum result = gl.ClientWaitSync(fence, flags, kWaitStepNanoseconds);
+    if (result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED) {
+      signaled = true;
+      break;
+    }
+    if (result != GL_TIMEOUT_EXPIRED) {
+      break;
+    }
+    flags = 0;
+  }
+  gl.DeleteSync(fence);
+  return signaled;
+}
+
 }  // namespace
 
 CommandBufferGLES::CommandBufferGLES(std::weak_ptr<const Context> context,
@@ -75,7 +110,8 @@ bool CommandBufferGLES::IsValid() const {
 bool CommandBufferGLES::OnSubmitCommands(CompletionCallback callback) {
   // The reactor consumes commands on the GL thread and GL synchronizes
   // buffer reuse implicitly, so submissions are tracked at reactor
-  // consumption granularity rather than GPU completion.
+  // consumption granularity rather than GPU completion. A completion
+  // callback, though, runs only once the GPU finished, through a fence.
   std::shared_ptr<GpuSubmissionTracker> tracker;
   uint64_t submission_id = 0;
   if (auto context = context_.lock()) {
@@ -84,11 +120,13 @@ bool CommandBufferGLES::OnSubmitCommands(CompletionCallback callback) {
   }
 
   if (reactor_->CanReactOnCurrentThread()) {
-    const auto result = reactor_->React();
+    auto result = reactor_->React();
     if (tracker) {
       tracker->RecordCompletion(submission_id);
     }
     if (callback) {
+      // The callback promises GPU completion, which readbacks rely on.
+      result = result && WaitForGPU(reactor_->GetProcTable());
       callback(result ? CommandBuffer::Status::kCompleted
                       : CommandBuffer::Status::kError);
     }
@@ -109,7 +147,11 @@ bool CommandBufferGLES::OnSubmitCommands(CompletionCallback callback) {
               tracker->RecordCompletion(submission_id);
             }
             if (deferred_callback) {
-              deferred_callback->Complete();
+              // Destroying the callback without completing it reports an
+              // error.
+              if (WaitForGPU(reactor.GetProcTable())) {
+                deferred_callback->Complete();
+              }
             }
           },
           /*defer=*/true)) {
