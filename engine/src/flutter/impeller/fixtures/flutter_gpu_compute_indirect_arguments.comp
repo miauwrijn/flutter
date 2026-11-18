@@ -1,0 +1,40 @@
+// Copyright 2013 The Flutter Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// Writes the arguments of a non-indexed draw of `vertex_count` vertices and of
+// a dispatch of one workgroup, for indirect draws and dispatches to read.
+
+layout(local_size_x = 1) in;
+
+layout(std430) buffer;
+
+layout(binding = 0) uniform ArgumentInfo {
+  uint vertex_count;
+}
+argument_info;
+
+layout(binding = 1) writeonly buffer DrawArguments {
+  uint vertex_count;
+  uint instance_count;
+  uint first_vertex;
+  uint first_instance;
+}
+draw_arguments;
+
+layout(binding = 2) writeonly buffer DispatchArguments {
+  uint x;
+  uint y;
+  uint z;
+}
+dispatch_arguments;
+
+void main() {
+  draw_arguments.vertex_count = argument_info.vertex_count;
+  draw_arguments.instance_count = 1u;
+  draw_arguments.first_vertex = 0u;
+  draw_arguments.first_instance = 0u;
+  dispatch_arguments.x = 1u;
+  dispatch_arguments.y = 1u;
+  dispatch_arguments.z = 1u;
+}

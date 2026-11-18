@@ -11,6 +11,7 @@
 #include "impeller/base/validation.h"
 #include "impeller/renderer/backend/gles/buffer_bindings_gles.h"
 #include "impeller/renderer/backend/gles/compute_pipeline_gles.h"
+#include "impeller/renderer/backend/gles/device_buffer_gles.h"
 #include "impeller/renderer/backend/gles/texture_gles.h"
 #include "impeller/renderer/command.h"
 
@@ -107,6 +108,21 @@ absl::Status ComputePassGLES::Compute(std::array<uint32_t, 3> workgroup_count) {
                                  .buffers = buffers_,
                                  .textures = textures_,
                                  .workgroup_count = workgroup_count});
+  return absl::OkStatus();
+}
+
+absl::Status ComputePassGLES::ComputeIndirect(BufferView indirect_buffer) {
+  if (!pipeline_) {
+    return absl::FailedPreconditionError("No compute pipeline is bound.");
+  }
+  if (!indirect_buffer) {
+    return absl::InvalidArgumentError("No indirect buffer.");
+  }
+  dispatches_.push_back(
+      Dispatch{.pipeline = pipeline_,
+               .buffers = buffers_,
+               .textures = textures_,
+               .indirect_buffer = std::move(indirect_buffer)});
   return absl::OkStatus();
 }
 
@@ -230,8 +246,21 @@ bool ComputePassGLES::EncodeDispatchesInReactor(
       break;
     }
 
-    gl.DispatchCompute(dispatch.workgroup_count[0], dispatch.workgroup_count[1],
-                       dispatch.workgroup_count[2]);
+    if (dispatch.indirect_buffer) {
+      const auto& indirect =
+          DeviceBufferGLES::Cast(*dispatch.indirect_buffer.GetBuffer());
+      if (!indirect.BindAndUploadDataIfNecessary(
+              DeviceBufferGLES::BindingType::kDispatchIndirectBuffer)) {
+        result = false;
+        break;
+      }
+      gl.DispatchComputeIndirect(
+          static_cast<GLintptr>(dispatch.indirect_buffer.GetRange().offset));
+    } else {
+      gl.DispatchCompute(dispatch.workgroup_count[0],
+                         dispatch.workgroup_count[1],
+                         dispatch.workgroup_count[2]);
+    }
     // Make the dispatch's writes visible to the next dispatch and to every
     // later consumer: vertex, index, uniform and indirect reads, texture
     // fetches, copies and host reads through mapped buffers.

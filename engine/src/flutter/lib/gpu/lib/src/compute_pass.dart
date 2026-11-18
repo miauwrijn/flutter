@@ -344,6 +344,43 @@ base class ComputePass extends NativeFieldWrapperClass1
     }
   }
 
+  /// Dispatches the bound pipeline with workgroup counts the GPU reads from
+  /// [arguments]: three tightly packed uint32 values, x, y and z, starting at
+  /// a multiple of 4 bytes.
+  ///
+  /// The counts may be written by an earlier dispatch in this pass or by an
+  /// earlier pass, which the dispatch sees without a barrier. A zero count
+  /// dispatches nothing. Counts above [GpuContext.maxComputeWorkgroupCount]
+  /// are undefined behavior on the GPU, so they are not checked.
+  ///
+  /// Throws like [dispatch], and if [arguments] is too short or misaligned.
+  void dispatchIndirect(BufferView arguments) {
+    _checkNotEnded();
+    if (_pipeline == null) {
+      throw StateError(
+        'ComputePass.dispatchIndirect() was called before a ComputePipeline '
+        'was bound with ComputePass.bindPipeline().',
+      );
+    }
+    final String? error = _dispatchIndirect(
+      arguments.buffer,
+      arguments.offsetInBytes,
+      arguments.lengthInBytes,
+    );
+    if (error != null) {
+      throw Exception(error);
+    }
+  }
+
+  @Native<Handle Function(Pointer<Void>, Pointer<Void>, Int, Int)>(
+    symbol: 'InternalFlutterGpu_ComputePass_DispatchIndirect',
+  )
+  external String? _dispatchIndirect(
+    DeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes,
+  );
+
   /// The largest count the native call takes along one dimension. Devices
   /// allow far fewer workgroups than this; the native side checks the
   /// device's limit.

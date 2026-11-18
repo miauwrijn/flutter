@@ -59,6 +59,8 @@ class ComputePassGLES final
     std::vector<BufferBinding> buffers;
     std::vector<TextureBinding> textures;
     std::array<uint32_t, 3> workgroup_count = {0u, 0u, 0u};
+    /// Set for an indirect dispatch, which reads the counts from it.
+    BufferView indirect_buffer;
   };
 
   std::shared_ptr<ReactorGLES> reactor_;
@@ -87,6 +89,9 @@ class ComputePassGLES final
 
   // |ComputePass|
   absl::Status Compute(std::array<uint32_t, 3> workgroup_count) override;
+
+  // |ComputePass|
+  absl::Status ComputeIndirect(BufferView indirect_buffer) override;
 
   // |ResourceBinder|
   bool BindResource(ShaderStage stage,

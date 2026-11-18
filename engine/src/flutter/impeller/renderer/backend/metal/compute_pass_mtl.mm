@@ -180,6 +180,27 @@ absl::Status ComputePassMTL::Compute(std::array<uint32_t, 3> workgroup_count) {
   return absl::OkStatus();
 }
 
+absl::Status ComputePassMTL::ComputeIndirect(BufferView indirect_buffer) {
+  fml::ScopedCleanupClosure pop_label([this]() { PopCommandLabel(); });
+
+  if (!pass_bindings_cache_.GetPipeline()) {
+    return absl::Status(absl::StatusCode::kCancelled,
+                        "No compute pipeline is bound.");
+  }
+  if (!indirect_buffer) {
+    return absl::InvalidArgumentError("No indirect buffer.");
+  }
+  const MTLSize threads_per_threadgroup =
+      MTLSizeMake(workgroup_size_[0], workgroup_size_[1], workgroup_size_[2]);
+  [encoder_
+      dispatchThreadgroupsWithIndirectBuffer:DeviceBufferMTL::Cast(
+                                                 *indirect_buffer.GetBuffer())
+                                                 .GetMTLBuffer()
+                        indirectBufferOffset:indirect_buffer.GetRange().offset
+                       threadsPerThreadgroup:threads_per_threadgroup];
+  return absl::OkStatus();
+}
+
 bool ComputePassMTL::EncodeCommands() const {
   [encoder_ endEncoding];
   did_finish_encoding_ = true;

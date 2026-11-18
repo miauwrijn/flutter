@@ -68,6 +68,7 @@ if (enable_unittests) {
       "//flutter/impeller/fixtures/flutter_gpu_array_texture.frag",
       "//flutter/impeller/fixtures/flutter_gpu_compute.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_oversized.comp",
+      "//flutter/impeller/fixtures/flutter_gpu_compute_indirect_arguments.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_scale.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_storage_texture.comp",
       "//flutter/impeller/fixtures/flutter_gpu_compute_storage_texture_rw.comp",
@@ -93,6 +94,7 @@ if (enable_unittests) {
       "\"ComputeTextureTriangle\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_texture.comp\"}",
       "\"ComputeTriangle\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_triangle.comp\"}",
       "\"ComputeScaleWithUnused\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_unused.comp\"}",
+      "\"ComputeIndirectArguments\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_indirect_arguments.comp\"}",
       "\"ComputeStorageTexture\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_storage_texture.comp\"}",
       "\"ComputeStorageTextureReadWrite\": {\"type\": \"compute\", \"file\": \"${fixtures}/flutter_gpu_compute_storage_texture_rw.comp\"}",
     ]

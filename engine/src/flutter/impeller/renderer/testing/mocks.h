@@ -143,6 +143,10 @@ class MockComputePass : public ComputePass {
               Compute,
               ((std::array<uint32_t, 3>)workgroup_count),
               (override));
+  MOCK_METHOD(absl::Status,
+              ComputeIndirect,
+              (BufferView indirect_buffer),
+              (override));
   MOCK_METHOD(void, AddBufferMemoryBarrier, (), (override));
   MOCK_METHOD(void, AddTextureMemoryBarrier, (), (override));
   MOCK_METHOD(bool, EncodeCommands, (), (const, override));

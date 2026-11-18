@@ -98,6 +98,13 @@ class ComputePassVK final : public ComputePass {
   // |ComputePass|
   absl::Status Compute(std::array<uint32_t, 3> workgroup_count) override;
 
+  // |ComputePass|
+  absl::Status ComputeIndirect(BufferView indirect_buffer) override;
+
+  /// Transitions storage images, writes descriptors and records the barrier
+  /// that orders a dispatch after earlier work. Called before each dispatch.
+  absl::Status PrepareDispatch();
+
   // |ResourceBinder|
   bool BindResource(ShaderStage stage,
                     DescriptorType type,

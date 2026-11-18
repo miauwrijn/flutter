@@ -499,6 +499,11 @@ bool RenderPassVK::SetIndexBuffer(BufferView index_buffer,
 }
 
 // |RenderPass|
+// |RenderPass|
+void RenderPassVK::SetIndirectBuffer(BufferView indirect_buffer) {
+  indirect_buffer_ = std::move(indirect_buffer);
+}
+
 absl::Status RenderPassVK::Draw() {
   if (!pipeline_) {
     return absl::Status(absl::StatusCode::kCancelled,
@@ -571,7 +576,26 @@ absl::Status RenderPassVK::Draw() {
         command_buffer_vk_, TextureVK::Cast(*color_image_vk_).GetImage());
   }
 
-  if (has_index_buffer_) {
+  if (indirect_buffer_) {
+    // The argument layouts match VkDrawIndirectCommand and
+    // VkDrawIndexedIndirectCommand.
+    const vk::Buffer buffer =
+        DeviceBufferVK::Cast(*indirect_buffer_.GetBuffer()).GetBuffer();
+    const vk::DeviceSize offset = indirect_buffer_.GetRange().offset;
+    std::shared_ptr<const DeviceBuffer> indirect =
+        indirect_buffer_.TakeBuffer();
+    if (indirect && !command_buffer_->Track(indirect)) {
+      return absl::Status(absl::StatusCode::kAborted,
+                          "Could not track the indirect buffer.");
+    }
+    if (has_index_buffer_) {
+      command_buffer_vk_.drawIndexedIndirect(buffer, offset, /*drawCount=*/1u,
+                                             /*stride=*/0u);
+    } else {
+      command_buffer_vk_.drawIndirect(buffer, offset, /*drawCount=*/1u,
+                                      /*stride=*/0u);
+    }
+  } else if (has_index_buffer_) {
     command_buffer_vk_.drawIndexed(element_count_,   // index count
                                    instance_count_,  // instance count
                                    0u,               // first index
@@ -593,6 +617,7 @@ absl::Status RenderPassVK::Draw() {
 #endif  // IMPELLER_DEBUG
   has_label_ = false;
   has_index_buffer_ = false;
+  indirect_buffer_ = {};
   bound_image_offset_ = 0u;
   bound_buffer_offset_ = 0u;
   descriptor_write_offset_ = 0u;

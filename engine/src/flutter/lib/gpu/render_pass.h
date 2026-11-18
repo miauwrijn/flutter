@@ -22,6 +22,7 @@
 #include "lib/gpu/device_buffer.h"
 #include "lib/gpu/render_pipeline.h"
 #include "lib/gpu/texture.h"
+#include "third_party/abseil-cpp/absl/status/status.h"
 
 namespace flutter {
 namespace gpu {
@@ -85,7 +86,20 @@ class RenderPass : public RefCountedDartWrappable<RenderPass> {
   /// Append a draw to the underlying render pass. [element_count] is the
   /// vertex count for a non-indexed draw, or the index count when
   /// [indexed] is true. [instance_count] is the number of instances to draw.
-  bool Draw(size_t element_count, size_t instance_count, bool indexed);
+  bool Draw(size_t element_count,
+            size_t instance_count,
+            bool indexed,
+            impeller::BufferView indirect_buffer = {});
+
+  /// Appends a draw whose arguments the GPU reads from [length_in_bytes] of
+  /// [buffer] at [offset_in_bytes]. Returns an error naming the problem if the
+  /// arguments are out of bounds, misaligned or too short, if indirect draws
+  /// are not supported, or if the draw fails.
+  absl::Status DrawIndirect(
+      const std::shared_ptr<const impeller::DeviceBuffer>& buffer,
+      size_t offset_in_bytes,
+      size_t length_in_bytes,
+      bool indexed);
 
   /// Whether the next draw must rebuild its backend pipeline. Exposed for
   /// testing the memoization's dirty tracking.
@@ -386,6 +400,15 @@ extern bool InternalFlutterGpu_RenderPass_Draw(
     flutter::gpu::RenderPass* wrapper,
     int vertex_count,
     int instance_count);
+
+/// Returns null on success, or the reason the draw failed.
+FLUTTER_GPU_EXPORT
+extern Dart_Handle InternalFlutterGpu_RenderPass_DrawIndirect(
+    flutter::gpu::RenderPass* wrapper,
+    flutter::gpu::DeviceBuffer* buffer,
+    int offset_in_bytes,
+    int length_in_bytes,
+    bool indexed);
 
 FLUTTER_GPU_EXPORT
 extern bool InternalFlutterGpu_RenderPass_DrawIndexed(

@@ -65,7 +65,9 @@ bool RenderPass::AddCommand(Command&& command) {
     return false;
   }
 
-  if (command.element_count == 0u || command.instance_count == 0u) {
+  // An indirect draw's counts are only known on the GPU.
+  if (!command.indirect_buffer &&
+      (command.element_count == 0u || command.instance_count == 0u)) {
     // Essentially a no-op. Don't record the command but this is not necessary
     // an error either.
     return true;
@@ -122,6 +124,10 @@ void RenderPass::SetElementCount(size_t count) {
 
 void RenderPass::SetInstanceCount(size_t count) {
   pending_.instance_count = count;
+}
+
+void RenderPass::SetIndirectBuffer(BufferView indirect_buffer) {
+  pending_.indirect_buffer = std::move(indirect_buffer);
 }
 
 bool RenderPass::SetVertexBuffer(VertexBuffer buffer) {

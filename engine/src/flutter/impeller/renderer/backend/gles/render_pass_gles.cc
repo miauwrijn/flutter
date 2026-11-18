@@ -652,6 +652,24 @@ void RenderPassGLES::ResetGLState(const ProcTableGLES& gl) {
 
     BufferBindingsGLES* vertex_desc_gles = pipeline.GetBufferBindings();
 
+    // OpenGL ES rejects indirect draws while the default vertex array object
+    // is bound, and this backend uses it on ES, so give an indirect draw its
+    // own vertex array object. It must be bound before the vertex attributes
+    // and the index buffer, which it records.
+    const bool is_indirect = static_cast<bool>(command.indirect_buffer);
+    GLuint indirect_vertex_array = 0;
+    if (is_indirect && gl.GetCapabilities()->IsES()) {
+      gl.GenVertexArrays(1, &indirect_vertex_array);
+      gl.BindVertexArray(indirect_vertex_array);
+    }
+    fml::ScopedCleanupClosure delete_indirect_vertex_array(
+        [&gl, &indirect_vertex_array]() {
+          if (indirect_vertex_array != 0) {
+            gl.BindVertexArray(0);
+            gl.DeleteVertexArrays(1, &indirect_vertex_array);
+          }
+        });
+
     //--------------------------------------------------------------------------
     /// Bind vertex buffers.
     ///
@@ -754,7 +772,24 @@ void RenderPassGLES::ResetGLState(const ProcTableGLES& gl) {
       }
     };
 
-    if (command.instance_count == 0u) {
+    if (is_indirect) {
+      // The argument layouts match DrawArraysIndirectCommand and
+      // DrawElementsIndirectCommand.
+      const auto& indirect =
+          DeviceBufferGLES::Cast(*command.indirect_buffer.GetBuffer());
+      if (!indirect.BindAndUploadDataIfNecessary(
+              DeviceBufferGLES::BindingType::kDrawIndirectBuffer)) {
+        return false;
+      }
+      const GLvoid* indirect_offset = reinterpret_cast<const GLvoid*>(
+          static_cast<uintptr_t>(command.indirect_buffer.GetRange().offset));
+      if (!is_indexed) {
+        gl.DrawArraysIndirect(mode, indirect_offset);
+      } else {
+        gl.DrawElementsIndirect(mode, ToIndexType(command.index_type),
+                                indirect_offset);
+      }
+    } else if (command.instance_count == 0u) {
       // A zero instance count draws nothing, matching the Metal and Vulkan
       // backends.
     } else if (emulate_instanced) {

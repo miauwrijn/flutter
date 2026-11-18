@@ -385,6 +385,51 @@ absl::Status ComputePass::Dispatch(std::array<uint32_t, 3> workgroup_count) {
         max_count[0], "x", max_count[1], "x", max_count[2], "."));
   }
 
+  if (absl::Status status = PrepareDispatch(); !status.ok()) {
+    return status;
+  }
+  if (absl::Status status = compute_pass_->Compute(workgroup_count);
+      !status.ok()) {
+    return absl::InternalError(status.message());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ComputePass::DispatchIndirect(
+    const std::shared_ptr<const impeller::DeviceBuffer>& buffer,
+    size_t offset_in_bytes,
+    size_t length_in_bytes) {
+  if (!command_buffer_ || !compute_pass_) {
+    return absl::FailedPreconditionError("The ComputePass is not recording.");
+  }
+  if (!pipeline_) {
+    return absl::FailedPreconditionError("No ComputePipeline is bound.");
+  }
+  if (absl::Status status =
+          ValidateView(buffer, offset_in_bytes, length_in_bytes);
+      !status.ok()) {
+    return status;
+  }
+  constexpr size_t kDispatchArgumentsSize = 3 * sizeof(uint32_t);
+  if (offset_in_bytes % sizeof(uint32_t) != 0 ||
+      length_in_bytes < kDispatchArgumentsSize) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "The indirect dispatch arguments must start at a multiple of 4 bytes "
+        "and hold ",
+        kDispatchArgumentsSize, " bytes (three uint32 workgroup counts)."));
+  }
+  if (absl::Status status = PrepareDispatch(); !status.ok()) {
+    return status;
+  }
+  if (absl::Status status = compute_pass_->ComputeIndirect(impeller::BufferView(
+          buffer, impeller::Range(offset_in_bytes, kDispatchArgumentsSize)));
+      !status.ok()) {
+    return absl::InternalError(status.message());
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ComputePass::PrepareDispatch() {
   absl::StatusOr<std::shared_ptr<BackendComputePipeline>> pipeline_or =
       pipeline_->GetOrCreatePipeline(*context_);
   if (!pipeline_or.ok()) {
@@ -410,11 +455,6 @@ absl::Status ComputePass::Dispatch(std::array<uint32_t, 3> workgroup_count) {
       return status;
     }
     bindings_dirty_ = false;
-  }
-
-  if (absl::Status status = compute_pass_->Compute(workgroup_count);
-      !status.ok()) {
-    return absl::InternalError(status.message());
   }
   return absl::OkStatus();
 }
@@ -514,6 +554,23 @@ bool InternalFlutterGpu_ComputePass_BindTextureIndexed(
           texture->GetTexture(),
           wrapper->GetContext()->GetSamplerLibrary()->GetSampler(sampler_desc))
       .ok();
+}
+
+Dart_Handle InternalFlutterGpu_ComputePass_DispatchIndirect(
+    flutter::gpu::ComputePass* wrapper,
+    flutter::gpu::DeviceBuffer* buffer,
+    int offset_in_bytes,
+    int length_in_bytes) {
+  if (offset_in_bytes < 0 || length_in_bytes < 0) {
+    return tonic::ToDart("The indirect buffer range must be non-negative.");
+  }
+  absl::Status status = wrapper->DispatchIndirect(
+      buffer->GetBuffer(), static_cast<size_t>(offset_in_bytes),
+      static_cast<size_t>(length_in_bytes));
+  if (!status.ok()) {
+    return tonic::ToDart(std::string(status.message()));
+  }
+  return Dart_Null();
 }
 
 Dart_Handle InternalFlutterGpu_ComputePass_BindStorageTextureIndexed(

@@ -50,6 +50,8 @@ class DeviceBufferGLES final
     kUniformBuffer,
     kShaderStorageBuffer,
     kCopyReadBuffer,
+    kDispatchIndirectBuffer,
+    kDrawIndirectBuffer,
   };
 
   [[nodiscard]] bool BindAndUploadDataIfNecessary(BindingType type) const;

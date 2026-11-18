@@ -23,6 +23,7 @@
 #include "impeller/renderer/pipeline_library.h"
 #include "lib/gpu/context.h"
 #include "lib/ui/ui_dart_state.h"
+#include "third_party/abseil-cpp/absl/strings/str_cat.h"
 #include "tonic/converter/dart_converter.h"
 
 namespace flutter {
@@ -288,8 +289,10 @@ RenderPass::GetOrCreatePipeline() {
 
 bool RenderPass::Draw(size_t element_count,
                       size_t instance_count,
-                      bool indexed) {
-  if (element_count == 0u || instance_count == 0u) {
+                      bool indexed,
+                      impeller::BufferView indirect_buffer) {
+  // An indirect draw's counts are only known on the GPU.
+  if (!indirect_buffer && (element_count == 0u || instance_count == 0u)) {
     return true;
   }
 
@@ -373,6 +376,9 @@ bool RenderPass::Draw(size_t element_count,
   }
   render_pass_->SetElementCount(element_count);
   render_pass_->SetInstanceCount(instance_count);
+  if (indirect_buffer) {
+    render_pass_->SetIndirectBuffer(std::move(indirect_buffer));
+  }
 
   render_pass_->SetStencilReference(stencil_reference);
 
@@ -387,6 +393,55 @@ bool RenderPass::Draw(size_t element_count,
   bool result = render_pass_->Draw().ok();
 
   return result;
+}
+
+absl::Status RenderPass::DrawIndirect(
+    const std::shared_ptr<const impeller::DeviceBuffer>& buffer,
+    size_t offset_in_bytes,
+    size_t length_in_bytes,
+    bool indexed) {
+  if (!GetContext()->GetCapabilities()->SupportsCompute()) {
+    return absl::UnimplementedError(
+        "Indirect draws are not supported by this GpuContext. They are "
+        "available where GpuContext.supportsCompute is true.");
+  }
+  if (!buffer) {
+    return absl::InvalidArgumentError("The indirect buffer is null.");
+  }
+  const size_t size = buffer->GetDeviceBufferDescriptor().size;
+  if (offset_in_bytes > size || length_in_bytes > size - offset_in_bytes) {
+    return absl::OutOfRangeError(
+        "The indirect draw arguments run past the end of their buffer.");
+  }
+  // Five uint32 values for an indexed draw, four otherwise.
+  const size_t arguments_size = (indexed ? 5u : 4u) * sizeof(uint32_t);
+  if (offset_in_bytes % sizeof(uint32_t) != 0 ||
+      length_in_bytes < arguments_size) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "The indirect draw arguments must start at a multiple of 4 bytes and "
+        "hold ",
+        arguments_size, " bytes."));
+  }
+  if (indexed && index_buffer_type == impeller::IndexType::kNone) {
+    return absl::FailedPreconditionError(
+        "drawIndexedIndirect was called without an index buffer bound.");
+  }
+  // OpenGL ES counts the first index from the start of the index buffer, so
+  // the index buffer view cannot be offset there.
+  if (indexed &&
+      GetContext()->GetBackendType() ==
+          impeller::Context::BackendType::kOpenGLES &&
+      index_buffer.GetRange().offset != 0u) {
+    return absl::InvalidArgumentError(
+        "On OpenGL ES, the index buffer of an indexed indirect draw must "
+        "start at offset 0 of its DeviceBuffer.");
+  }
+  if (!Draw(/*element_count=*/0u, /*instance_count=*/1u, indexed,
+            impeller::BufferView(
+                buffer, impeller::Range(offset_in_bytes, arguments_size)))) {
+    return absl::InternalError("Failed to record the indirect draw.");
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace gpu
@@ -852,6 +907,24 @@ bool InternalFlutterGpu_RenderPass_Draw(flutter::gpu::RenderPass* wrapper,
   // Guard the casts to size_t; a negative value would wrap.
   return vertex_count >= 0 && instance_count >= 0 &&
          wrapper->Draw(vertex_count, instance_count, /*indexed=*/false);
+}
+
+Dart_Handle InternalFlutterGpu_RenderPass_DrawIndirect(
+    flutter::gpu::RenderPass* wrapper,
+    flutter::gpu::DeviceBuffer* buffer,
+    int offset_in_bytes,
+    int length_in_bytes,
+    bool indexed) {
+  if (offset_in_bytes < 0 || length_in_bytes < 0) {
+    return tonic::ToDart("The indirect buffer range must be non-negative.");
+  }
+  absl::Status status = wrapper->DrawIndirect(
+      buffer->GetBuffer(), static_cast<size_t>(offset_in_bytes),
+      static_cast<size_t>(length_in_bytes), indexed);
+  if (!status.ok()) {
+    return tonic::ToDart(std::string(status.message()));
+  }
+  return Dart_Null();
 }
 
 bool InternalFlutterGpu_RenderPass_DrawIndexed(

@@ -98,6 +98,22 @@ class RenderPass : public ResourceBinder {
   virtual void SetInstanceCount(size_t count);
 
   //----------------------------------------------------------------------------
+  /// Makes the next `Draw` read its arguments on the GPU from
+  /// [indirect_buffer] instead of using the element and instance counts and
+  /// the base vertex.
+  ///
+  /// The buffer holds, at its offset (a multiple of 4), the same tightly
+  /// packed uint32 arguments on every backend: `vertex_count, instance_count,
+  /// first_vertex, first_instance` for a non-indexed draw, and `index_count,
+  /// instance_count, first_index, base_vertex, first_instance` for an indexed
+  /// one, where `base_vertex` is signed and `first_index` counts from the
+  /// start of the index buffer view. `first_instance` must be zero, as
+  /// OpenGL ES requires.
+  ///
+  /// Only available where `Capabilities::SupportsCompute` is true.
+  virtual void SetIndirectBuffer(BufferView indirect_buffer);
+
+  //----------------------------------------------------------------------------
   /// @deprecated Use SetVertexBuffer(BufferView[], size_t, size_t) instead.
   ///
   /// @brief      Specify the vertex and index buffer to use for this command.

@@ -807,6 +807,62 @@ base class RenderPass extends NativeFieldWrapperClass1
     }
   }
 
+  /// Draws with arguments the GPU reads from [arguments], so a compute pass
+  /// can decide how much to draw without a round trip to the CPU.
+  ///
+  /// [arguments] holds four tightly packed uint32 values, `vertexCount`,
+  /// `instanceCount`, `firstVertex` and `firstInstance`, starting at a
+  /// multiple of 4 bytes. `firstInstance` must be zero, as OpenGL ES
+  /// requires. The layout is the same on every backend. A compute shader
+  /// that writes them is seen by the draw without a barrier.
+  ///
+  /// Available where [GpuContext.supportsCompute] is true; throws otherwise,
+  /// and if [arguments] is too short or misaligned.
+  void drawIndirect(BufferView arguments) {
+    _checkNotEnded();
+    _validateVertexBindings();
+    final String? error = _drawIndirect(
+      arguments.buffer,
+      arguments.offsetInBytes,
+      arguments.lengthInBytes,
+      false,
+    );
+    if (error != null) {
+      throw Exception(error);
+    }
+  }
+
+  /// Like [drawIndirect], for an indexed draw with the bound index buffer.
+  ///
+  /// [arguments] holds five tightly packed uint32 values, `indexCount`,
+  /// `instanceCount`, `firstIndex`, `baseVertex` (signed) and
+  /// `firstInstance`. `firstIndex` counts from the start of the bound index
+  /// buffer view. On OpenGL ES that view must start at offset 0 of its
+  /// [DeviceBuffer].
+  void drawIndexedIndirect(BufferView arguments) {
+    _checkNotEnded();
+    _validateVertexBindings();
+    final String? error = _drawIndirect(
+      arguments.buffer,
+      arguments.offsetInBytes,
+      arguments.lengthInBytes,
+      true,
+    );
+    if (error != null) {
+      throw Exception(error);
+    }
+  }
+
+  @Native<Handle Function(Pointer<Void>, Pointer<Void>, Int, Int, Bool)>(
+    symbol: 'InternalFlutterGpu_RenderPass_DrawIndirect',
+  )
+  external String? _drawIndirect(
+    DeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes,
+    bool indexed,
+  );
+
   /// Throws a [StateError] when the bound vertex buffer slots are sparse,
   /// naming the slots in `[0, highestBound]` that were left unbound.
   void _validateVertexBindings() {

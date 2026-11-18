@@ -140,6 +140,12 @@ struct Command {
   uint32_t instance_count = 1u;
 
   //----------------------------------------------------------------------------
+  /// If set, the draw reads its arguments from this buffer on the GPU, and
+  /// `element_count`, `instance_count` and `base_vertex` are ignored. See
+  /// `RenderPass::SetIndirectBuffer`.
+  BufferView indirect_buffer;
+
+  //----------------------------------------------------------------------------
   /// The reference value to use in stenciling operations. Stencil configuration
   /// is part of pipeline setup and can be read from the pipelines descriptor.
   ///

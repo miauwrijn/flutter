@@ -49,6 +49,9 @@ class ComputePassMTL final : public ComputePass {
   absl::Status Compute(std::array<uint32_t, 3> workgroup_count) override;
 
   // |ComputePass|
+  absl::Status ComputeIndirect(BufferView indirect_buffer) override;
+
+  // |ComputePass|
   void SetCommandLabel(std::string_view label) override;
 
   // |ComputePass|

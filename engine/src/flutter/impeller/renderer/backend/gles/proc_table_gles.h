@@ -284,6 +284,9 @@ void(glDepthRange)(GLdouble n, GLdouble f);
 // those versions; see `CapabilitiesGLES::SupportsCompute`.
 #define FOR_EACH_IMPELLER_COMPUTE_PROC(PROC) \
   PROC(DispatchCompute);                     \
+  PROC(DispatchComputeIndirect);             \
+  PROC(DrawArraysIndirect);                  \
+  PROC(DrawElementsIndirect);                \
   PROC(MemoryBarrier);                       \
   PROC(BindImageTexture);                    \
   PROC(GetProgramInterfaceiv);               \

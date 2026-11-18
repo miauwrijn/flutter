@@ -60,6 +60,19 @@ class ComputePass : public ResourceBinder {
   ///
   virtual absl::Status Compute(std::array<uint32_t, 3> workgroup_count) = 0;
 
+  //----------------------------------------------------------------------------
+  /// @brief      Like `Compute`, but reads the workgroup counts on the GPU
+  ///             from [indirect_buffer]: three tightly packed uint32 values,
+  ///             x, y and z, at its offset, which must be a multiple of 4.
+  ///
+  ///             The counts may be written by an earlier dispatch in the pass
+  ///             or by an earlier pass. A zero count dispatches nothing.
+  ///             Counts above the device limit are undefined behavior.
+  ///
+  /// @return     A cancelled status if no pipeline is bound.
+  ///
+  virtual absl::Status ComputeIndirect(BufferView indirect_buffer) = 0;
+
   /// @brief Ensures all previously encoded compute command's buffer writes are
   ///        visible to any subsequent compute commands. Dispatches are already
   ///        synchronized automatically, so this is only a manual override.

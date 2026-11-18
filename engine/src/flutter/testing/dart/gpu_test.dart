@@ -4004,4 +4004,250 @@ void main() async {
     );
     await submitAndWait(commandBuffer);
   }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  /// Records a compute pass on [commandBuffer] that writes a full-viewport
+  /// triangle into [vertices] and, through `ComputeIndirectArguments`, the
+  /// arguments of a draw of [vertexCount] vertices into [drawArguments] and
+  /// of a one-workgroup dispatch into [dispatchArguments].
+  Future<void> recordIndirectArguments(
+    gpu.CommandBuffer commandBuffer, {
+    required gpu.DeviceBuffer vertices,
+    required gpu.DeviceBuffer drawArguments,
+    required gpu.DeviceBuffer dispatchArguments,
+    required int vertexCount,
+  }) async {
+    final gpu.ComputePipeline triangle = await createComputePipeline('ComputeTriangle');
+    final gpu.ComputePipeline arguments = await createComputePipeline('ComputeIndirectArguments');
+    final gpu.HostBuffer transients = gpu.gpuContext.createHostBuffer();
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(triangle);
+    computePass.bindUniform(
+      triangle.shader.getUniformSlot('TriangleInfo'),
+      transients.emplace(triangleInfo(1)),
+    );
+    computePass.bindStorageBuffer(
+      triangle.shader.getStorageBufferSlot('Vertices'),
+      wholeBuffer(vertices),
+    );
+    computePass.dispatch(1);
+    computePass.bindPipeline(arguments);
+    computePass.bindUniform(
+      arguments.shader.getUniformSlot('ArgumentInfo'),
+      transients.emplace(Uint32List.fromList(<int>[vertexCount, 0, 0, 0]).buffer.asByteData()),
+    );
+    computePass.bindStorageBuffer(
+      arguments.shader.getStorageBufferSlot('DrawArguments'),
+      wholeBuffer(drawArguments),
+    );
+    computePass.bindStorageBuffer(
+      arguments.shader.getStorageBufferSlot('DispatchArguments'),
+      wholeBuffer(dispatchArguments),
+    );
+    computePass.dispatch(1);
+  }
+
+  /// Records a render pass that clears a new texture to red and draws
+  /// [vertices] in lime with [drawArguments] through [draw], and returns the
+  /// texture.
+  Future<gpu.Texture> drawWithArguments(
+    gpu.CommandBuffer commandBuffer,
+    gpu.DeviceBuffer vertices,
+    void Function(gpu.RenderPass renderPass) draw,
+  ) async {
+    final gpu.Texture texture = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      100,
+      100,
+    );
+    final gpu.RenderPass renderPass = commandBuffer.createRenderPass(
+      gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: texture, clearValue: Colors.red)),
+    );
+    final gpu.RenderPipeline pipeline = await createUnlitRenderPipeline();
+    renderPass.bindPipeline(pipeline);
+    renderPass.bindVertexBuffer(wholeBuffer(vertices));
+    renderPass.bindUniform(
+      pipeline.vertexShader.getUniformSlot('VertInfo'),
+      gpu.gpuContext.createHostBuffer().emplace(unlitUBO(Matrix4.identity(), Colors.lime)),
+    );
+    draw(renderPass);
+    return texture;
+  }
+
+  test('RenderPass.drawIndirect draws as many vertices as a compute shader wrote', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    for (final (int vertexCount, bool covers) in <(int, bool)>[(3, true), (0, false)]) {
+      final gpu.DeviceBuffer vertices = createTriangleVertexBuffer();
+      final gpu.DeviceBuffer drawArguments = gpu.gpuContext.createDeviceBuffer(
+        gpu.StorageMode.devicePrivate,
+        16,
+      );
+      final gpu.DeviceBuffer dispatchArguments = gpu.gpuContext.createDeviceBuffer(
+        gpu.StorageMode.devicePrivate,
+        12,
+      );
+      final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+      await recordIndirectArguments(
+        commandBuffer,
+        vertices: vertices,
+        drawArguments: drawArguments,
+        dispatchArguments: dispatchArguments,
+        vertexCount: vertexCount,
+      );
+      final gpu.Texture texture = await drawWithArguments(
+        commandBuffer,
+        vertices,
+        (gpu.RenderPass renderPass) => renderPass.drawIndirect(wholeBuffer(drawArguments)),
+      );
+      await submitAndWait(commandBuffer);
+      await expectTriangleCoversViewport(texture, covers: covers);
+    }
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('RenderPass.drawIndexedIndirect draws with host-written arguments', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.DeviceBuffer vertices = createTriangleVertexBuffer();
+    final gpu.DeviceBuffer drawArguments = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      16,
+    );
+    final gpu.DeviceBuffer dispatchArguments = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      12,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    await recordIndirectArguments(
+      commandBuffer,
+      vertices: vertices,
+      drawArguments: drawArguments,
+      dispatchArguments: dispatchArguments,
+      vertexCount: 3,
+    );
+    final gpu.DeviceBuffer indices = gpu.gpuContext.createDeviceBufferWithCopy(
+      Uint16List.fromList(<int>[0, 1, 2, 0]).buffer.asByteData(),
+    );
+    // indexCount, instanceCount, firstIndex, baseVertex, firstInstance.
+    final gpu.DeviceBuffer indexedArguments = gpu.gpuContext.createDeviceBufferWithCopy(
+      Uint32List.fromList(<int>[3, 1, 0, 0, 0]).buffer.asByteData(),
+    );
+    final gpu.Texture texture = await drawWithArguments(commandBuffer, vertices, (
+      gpu.RenderPass renderPass,
+    ) {
+      renderPass.bindIndexBuffer(wholeBuffer(indices), gpu.IndexType.int16);
+      renderPass.drawIndexedIndirect(wholeBuffer(indexedArguments));
+    });
+    await submitAndWait(commandBuffer);
+    await expectTriangleCoversViewport(texture, covers: true);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('ComputePass.dispatchIndirect reads counts a dispatch or the host wrote', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline scale = await createComputePipeline('ComputeScale');
+    final gpu.DeviceBuffer vertices = createTriangleVertexBuffer();
+    final gpu.DeviceBuffer drawArguments = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      16,
+    );
+    final gpu.DeviceBuffer dispatchArguments = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      12,
+    );
+    final gpu.DeviceBuffer zeroCounts = gpu.gpuContext.createDeviceBufferWithCopy(
+      Uint32List.fromList(<int>[0, 1, 1]).buffer.asByteData(),
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    await recordIndirectArguments(
+      commandBuffer,
+      vertices: vertices,
+      drawArguments: drawArguments,
+      dispatchArguments: dispatchArguments,
+      vertexCount: 3,
+    );
+    final Future<ByteData> before = commandBuffer.readBuffer(wholeBuffer(vertices));
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(scale);
+    computePass.bindStorageBuffer(
+      scale.shader.getStorageBufferSlot('Vertices'),
+      wholeBuffer(vertices),
+    );
+    // One workgroup, from counts the previous pass wrote, doubles each
+    // position. Zero workgroups, from counts the host wrote, do nothing.
+    computePass.dispatchIndirect(wholeBuffer(dispatchArguments));
+    computePass.dispatchIndirect(wholeBuffer(zeroCounts));
+    final Future<ByteData> after = commandBuffer.readBuffer(wholeBuffer(vertices));
+    await submitAndWait(commandBuffer);
+
+    final Float32List beforeValues = (await before).buffer.asFloat32List();
+    final Float32List afterValues = (await after).buffer.asFloat32List();
+    expect(beforeValues.any((double value) => value != 0), isTrue);
+    for (var i = 0; i < beforeValues.length; i++) {
+      expect(afterValues[i], beforeValues[i] * 2, reason: 'component $i');
+    }
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('Indirect draws and dispatches validate their arguments', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ComputePipeline scale = await createComputePipeline('ComputeScale');
+    final gpu.DeviceBuffer arguments = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.hostVisible,
+      32,
+    );
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    expect(() => computePass.dispatchIndirect(wholeBuffer(arguments)), throwsStateError);
+    computePass.bindPipeline(scale);
+    computePass.bindStorageBuffer(
+      scale.shader.getStorageBufferSlot('Vertices'),
+      wholeBuffer(createTriangleVertexBuffer()),
+    );
+    // Misaligned, and too short.
+    expect(
+      () => computePass.dispatchIndirect(
+        gpu.BufferView(arguments, offsetInBytes: 2, lengthInBytes: 12),
+      ),
+      throwsException,
+    );
+    expect(
+      () => computePass.dispatchIndirect(
+        gpu.BufferView(arguments, offsetInBytes: 0, lengthInBytes: 8),
+      ),
+      throwsException,
+    );
+    computePass.end();
+
+    final gpu.Texture texture = await drawWithArguments(
+      commandBuffer,
+      createTriangleVertexBuffer(),
+      (gpu.RenderPass renderPass) {
+        // A non-indexed draw needs four values, an indexed one five.
+        expect(
+          () => renderPass.drawIndirect(
+            gpu.BufferView(arguments, offsetInBytes: 0, lengthInBytes: 12),
+          ),
+          throwsException,
+        );
+        expect(
+          () => renderPass.drawIndexedIndirect(
+            gpu.BufferView(arguments, offsetInBytes: 0, lengthInBytes: 20),
+          ),
+          throwsA(
+            isA<Exception>().having(
+              (Exception e) => e.toString(),
+              'message',
+              contains('without an index buffer'),
+            ),
+          ),
+        );
+      },
+    );
+    await submitAndWait(commandBuffer);
+    expect(texture, isNotNull);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
 }

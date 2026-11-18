@@ -135,6 +135,10 @@ static GLenum ToTarget(DeviceBufferGLES::BindingType type) {
       return GL_SHADER_STORAGE_BUFFER;
     case DeviceBufferGLES::BindingType::kCopyReadBuffer:
       return GL_COPY_READ_BUFFER;
+    case DeviceBufferGLES::BindingType::kDispatchIndirectBuffer:
+      return GL_DISPATCH_INDIRECT_BUFFER;
+    case DeviceBufferGLES::BindingType::kDrawIndirectBuffer:
+      return GL_DRAW_INDIRECT_BUFFER;
   }
   FML_UNREACHABLE();
 }

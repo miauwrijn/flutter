@@ -12,6 +12,7 @@
 #include "flutter/fml/logging.h"
 #include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/compute_pipeline_vk.h"
+#include "impeller/renderer/backend/vulkan/device_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/formats_vk.h"
 #include "impeller/renderer/backend/vulkan/sampler_vk.h"
 #include "impeller/renderer/backend/vulkan/texture_vk.h"
@@ -178,6 +179,47 @@ absl::Status ComputePassVK::Compute(std::array<uint32_t, 3> workgroup_count) {
                         "No compute pipeline is bound.");
   }
 
+  if (absl::Status status = PrepareDispatch(); !status.ok()) {
+    return status;
+  }
+
+  // The arguments are workgroup counts. The per-workgroup invocation count (the
+  // local size) is baked into the shader module, so dispatch the counts
+  // directly.
+  command_buffer_->GetCommandBuffer().dispatch(
+      workgroup_count[0], workgroup_count[1], workgroup_count[2]);
+  return absl::OkStatus();
+}
+
+// |ComputePass|
+absl::Status ComputePassVK::ComputeIndirect(BufferView indirect_buffer) {
+  fml::ScopedCleanupClosure pop_label([this]() { PopCommandLabel(); });
+
+  if (!pipeline_) {
+    return absl::Status(absl::StatusCode::kCancelled,
+                        "No compute pipeline is bound.");
+  }
+  if (!indirect_buffer) {
+    return absl::InvalidArgumentError("No indirect buffer.");
+  }
+  const vk::Buffer buffer =
+      DeviceBufferVK::Cast(*indirect_buffer.GetBuffer()).GetBuffer();
+  const vk::DeviceSize offset = indirect_buffer.GetRange().offset;
+  std::shared_ptr<const DeviceBuffer> device_buffer =
+      indirect_buffer.TakeBuffer();
+  if (device_buffer && !command_buffer_->Track(device_buffer)) {
+    return absl::InternalError("Could not track the indirect buffer.");
+  }
+
+  if (absl::Status status = PrepareDispatch(); !status.ok()) {
+    return status;
+  }
+  // The counts are a VkDispatchIndirectCommand.
+  command_buffer_->GetCommandBuffer().dispatchIndirect(buffer, offset);
+  return absl::OkStatus();
+}
+
+absl::Status ComputePassVK::PrepareDispatch() {
   // Layout transitions are recorded outside of the dispatch, before the
   // memory barrier below, which orders the dispatch after them.
   if (!TransitionStorageTextures()) {
@@ -194,12 +236,15 @@ absl::Status ComputePassVK::Compute(std::array<uint32_t, 3> workgroup_count) {
   if (has_dispatched_) {
     // Make the writes of earlier dispatches in the pass visible to this one,
     // and order this dispatch's writes after their reads and writes.
-    RecordMemoryBarrier(
-        command_buffer_->GetCommandBuffer(),
-        vk::PipelineStageFlagBits::eComputeShader,
-        vk::AccessFlagBits::eShaderWrite,
-        vk::PipelineStageFlagBits::eComputeShader,
-        vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite);
+    // Indirect dispatches read their counts in the draw indirect stage.
+    RecordMemoryBarrier(command_buffer_->GetCommandBuffer(),
+                        vk::PipelineStageFlagBits::eComputeShader,
+                        vk::AccessFlagBits::eShaderWrite,
+                        vk::PipelineStageFlagBits::eComputeShader |
+                            vk::PipelineStageFlagBits::eDrawIndirect,
+                        vk::AccessFlagBits::eShaderRead |
+                            vk::AccessFlagBits::eShaderWrite |
+                            vk::AccessFlagBits::eIndirectCommandRead);
   } else {
     // Make the writes of earlier render and blit passes visible to the first
     // dispatch, and order its writes after their reads and writes. Recording
@@ -208,19 +253,16 @@ absl::Status ComputePassVK::Compute(std::array<uint32_t, 3> workgroup_count) {
     // transitions those passes record complete before the fragment shader
     // stage, which is in this barrier's source scope, so the transitions are
     // ordered too.
-    RecordMemoryBarrier(
-        command_buffer_->GetCommandBuffer(), kGraphicsAndTransferStages,
-        kGraphicsAndTransferWrites, vk::PipelineStageFlagBits::eComputeShader,
-        vk::AccessFlagBits::eUniformRead | vk::AccessFlagBits::eShaderRead |
-            vk::AccessFlagBits::eShaderWrite);
+    RecordMemoryBarrier(command_buffer_->GetCommandBuffer(),
+                        kGraphicsAndTransferStages, kGraphicsAndTransferWrites,
+                        vk::PipelineStageFlagBits::eComputeShader |
+                            vk::PipelineStageFlagBits::eDrawIndirect,
+                        vk::AccessFlagBits::eUniformRead |
+                            vk::AccessFlagBits::eShaderRead |
+                            vk::AccessFlagBits::eShaderWrite |
+                            vk::AccessFlagBits::eIndirectCommandRead);
   }
   has_dispatched_ = true;
-
-  // The arguments are workgroup counts. The per-workgroup invocation count (the
-  // local size) is baked into the shader module, so dispatch the counts
-  // directly.
-  command_buffer_->GetCommandBuffer().dispatch(
-      workgroup_count[0], workgroup_count[1], workgroup_count[2]);
   return absl::OkStatus();
 }
 

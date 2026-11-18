@@ -112,6 +112,14 @@ class ComputePass : public RefCountedDartWrappable<ComputePass> {
   /// Dispatching zero workgroups along any dimension does nothing.
   absl::Status Dispatch(std::array<uint32_t, 3> workgroup_count);
 
+  /// Like `Dispatch`, but the GPU reads the workgroup counts from the three
+  /// uint32 values at [offset_in_bytes] of [buffer]. Returns an error if the
+  /// range is out of bounds, misaligned, or too short.
+  absl::Status DispatchIndirect(
+      const std::shared_ptr<const impeller::DeviceBuffer>& buffer,
+      size_t offset_in_bytes,
+      size_t length_in_bytes);
+
   /// Hands the backend pass a resource for every binding `shader` declares,
   /// taking each from an individual bind if there is one, and otherwise from
   /// the highest binding set slot that holds it. Returns an error naming the
@@ -120,6 +128,10 @@ class ComputePass : public RefCountedDartWrappable<ComputePass> {
   absl::Status ApplyBindings(const Shader& shader);
 
  private:
+  /// Builds and binds the pipeline and hands the backend the bindings, if
+  /// either changed since the last dispatch.
+  absl::Status PrepareDispatch();
+
   /// A texture bound individually, with the sampler to read it with.
   struct TextureBinding {
     std::shared_ptr<const impeller::Texture> texture;
@@ -207,6 +219,14 @@ extern bool InternalFlutterGpu_ComputePass_BindTextureIndexed(
     int width_address_mode,
     int height_address_mode,
     int max_anisotropy);
+
+/// Returns null on success, or the reason the dispatch failed.
+FLUTTER_GPU_EXPORT
+extern Dart_Handle InternalFlutterGpu_ComputePass_DispatchIndirect(
+    flutter::gpu::ComputePass* wrapper,
+    flutter::gpu::DeviceBuffer* buffer,
+    int offset_in_bytes,
+    int length_in_bytes);
 
 /// Returns null on success, or the reason the texture cannot be bound.
 FLUTTER_GPU_EXPORT
