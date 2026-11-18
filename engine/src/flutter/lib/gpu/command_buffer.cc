@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "dart_api.h"
+#include "fml/closure.h"
 #include "fml/logging.h"
 #include "fml/make_copyable.h"
 #include "impeller/core/buffer_view.h"
@@ -177,8 +178,22 @@ bool CommandBuffer::CopyTextureToBuffer(Texture& source,
                             "CommandBuffer.copyTextureToBuffer");
 }
 
+void CommandBuffer::SetReadbackBufferPool(
+    std::shared_ptr<ReadbackBufferPool> pool) {
+  readback_buffer_pool_ = std::move(pool);
+}
+
+const std::shared_ptr<ReadbackBufferPool>&
+CommandBuffer::GetReadbackBufferPool() const {
+  return readback_buffer_pool_;
+}
+
 std::shared_ptr<impeller::DeviceBuffer> CommandBuffer::CreateReadbackBuffer(
     size_t length) {
+  if (readback_buffer_pool_) {
+    return readback_buffer_pool_->Acquire(*context_->GetResourceAllocator(),
+                                          length);
+  }
   impeller::DeviceBufferDescriptor desc;
   desc.storage_mode = impeller::StorageMode::kHostVisible;
   // Zero-sized allocations are not portable, and an empty read still
@@ -347,6 +362,7 @@ bool InternalFlutterGpu_CommandBuffer_Initialize(
   auto res = fml::MakeRefCounted<flutter::gpu::CommandBuffer>(
       contextWrapper->GetContextShared(),
       contextWrapper->GetContext().CreateCommandBuffer());
+  res->SetReadbackBufferPool(contextWrapper->GetReadbackBufferPool());
   res->AssociateWithDartWrapper(wrapper);
 
   return true;
@@ -411,7 +427,8 @@ namespace {
 impeller::CommandBuffer::CompletionCallback MakeReadbackCompletion(
     Dart_Handle completion_callback,
     std::shared_ptr<impeller::DeviceBuffer> readback,
-    size_t length) {
+    size_t length,
+    std::shared_ptr<flutter::gpu::ReadbackBufferPool> pool) {
   auto dart_state = flutter::UIDartState::Current();
   auto ui_task_runner = dart_state->GetTaskRunners().GetUITaskRunner();
   auto persistent_callback = std::make_unique<tonic::DartPersistentValue>(
@@ -419,56 +436,63 @@ impeller::CommandBuffer::CompletionCallback MakeReadbackCompletion(
 
   return fml::MakeCopyable([callback = std::move(persistent_callback),
                             readback = std::move(readback), length,
-                            ui_task_runner](
+                            ui_task_runner, pool = std::move(pool)](
                                impeller::CommandBuffer::Status status) mutable {
     // Called at most once, from the thread that observes completion.
     if (!callback) {
       return;
     }
     const bool success = status == impeller::CommandBuffer::Status::kCompleted;
-    ui_task_runner->PostTask(fml::MakeCopyable([callback = std::move(callback),
-                                                readback = std::move(readback),
-                                                length, success]() mutable {
-      auto dart_state = callback->dart_state().lock();
-      if (!dart_state) {
-        // The isolate could have died in the meantime.
-        return;
-      }
-      tonic::DartState::Scope scope(dart_state);
-
-      Dart_Handle result = Dart_Null();
-      const uint8_t* contents = nullptr;
-      if (success) {
-        // Make GPU writes to non-coherent memory visible to the host.
-        readback->Invalidate(impeller::Range(0, length));
-        contents = readback->OnGetContents();
-      }
-      if (contents) {
-        result = Dart_NewTypedData(Dart_TypedData_kUint8, length);
-        if (!Dart_IsError(result) && length > 0) {
-          Dart_TypedData_Type type;
-          void* data = nullptr;
-          intptr_t data_length = 0;
-          Dart_Handle acquired =
-              Dart_TypedDataAcquireData(result, &type, &data, &data_length);
-          if (Dart_IsError(acquired)) {
-            result = Dart_Null();
-          } else {
-            std::memcpy(data, contents, length);
-            Dart_TypedDataReleaseData(result);
+    ui_task_runner->PostTask(fml::MakeCopyable(
+        [callback = std::move(callback), readback = std::move(readback), length,
+         success, pool = std::move(pool)]() mutable {
+          // The command buffer has finished with the buffer, so once its bytes
+          // are copied out it can serve the next readback.
+          fml::ScopedCleanupClosure release_readback([&readback, &pool]() {
+            if (pool) {
+              pool->Release(std::move(readback));
+            }
+          });
+          auto dart_state = callback->dart_state().lock();
+          if (!dart_state) {
+            // The isolate could have died in the meantime.
+            return;
           }
-        }
-        if (Dart_IsError(result)) {
-          result = Dart_Null();
-        }
-      }
+          tonic::DartState::Scope scope(dart_state);
 
-      tonic::DartInvoke(callback->Get(), {result});
+          Dart_Handle result = Dart_Null();
+          const uint8_t* contents = nullptr;
+          if (success) {
+            // Make GPU writes to non-coherent memory visible to the host.
+            readback->Invalidate(impeller::Range(0, length));
+            contents = readback->OnGetContents();
+          }
+          if (contents) {
+            result = Dart_NewTypedData(Dart_TypedData_kUint8, length);
+            if (!Dart_IsError(result) && length > 0) {
+              Dart_TypedData_Type type;
+              void* data = nullptr;
+              intptr_t data_length = 0;
+              Dart_Handle acquired =
+                  Dart_TypedDataAcquireData(result, &type, &data, &data_length);
+              if (Dart_IsError(acquired)) {
+                result = Dart_Null();
+              } else {
+                std::memcpy(data, contents, length);
+                Dart_TypedDataReleaseData(result);
+              }
+            }
+            if (Dart_IsError(result)) {
+              result = Dart_Null();
+            }
+          }
 
-      // The callback belongs to the isolate and must be released on
-      // the UI thread.
-      callback.reset();
-    }));
+          tonic::DartInvoke(callback->Get(), {result});
+
+          // The callback belongs to the isolate and must be released on
+          // the UI thread.
+          callback.reset();
+        }));
   });
 }
 
@@ -492,9 +516,10 @@ Dart_Handle InternalFlutterGpu_CommandBuffer_ReadBuffer(
   if (!readback) {
     return tonic::ToDart("Failed to record the buffer readback");
   }
-  if (!wrapper->AddCompletionCallback(MakeReadbackCompletion(
-          completion_callback, std::move(readback),
-          static_cast<size_t>(source_length_in_bytes)))) {
+  if (!wrapper->AddCompletionCallback(
+          MakeReadbackCompletion(completion_callback, std::move(readback),
+                                 static_cast<size_t>(source_length_in_bytes),
+                                 wrapper->GetReadbackBufferPool()))) {
     return tonic::ToDart("The CommandBuffer was already submitted");
   }
   return Dart_Null();
@@ -525,7 +550,8 @@ Dart_Handle InternalFlutterGpu_CommandBuffer_ReadTexture(
   }
   if (!wrapper->AddCompletionCallback(
           MakeReadbackCompletion(completion_callback, std::move(readback),
-                                 static_cast<size_t>(length_in_bytes)))) {
+                                 static_cast<size_t>(length_in_bytes),
+                                 wrapper->GetReadbackBufferPool()))) {
     return tonic::ToDart("The CommandBuffer was already submitted");
   }
   return Dart_Null();

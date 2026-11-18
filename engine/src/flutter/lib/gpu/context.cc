@@ -154,6 +154,11 @@ impeller::Context& Context::GetContext() {
   return *context_;
 }
 
+const std::shared_ptr<ReadbackBufferPool>& Context::GetReadbackBufferPool()
+    const {
+  return readback_buffer_pool_;
+}
+
 std::shared_ptr<impeller::Context>& Context::GetContextShared() {
   return context_;
 }

@@ -4427,4 +4427,32 @@ void main() async {
 
     await comparer.addGoldenImage(target.asImage(), 'flutter_gpu_test_compute_particles.png');
   }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test("Readbacks that reuse staging buffers return each read's bytes", () async {
+    // Each round reads a buffer with new contents into a staging buffer the
+    // previous round released, and a second read of another size in the same
+    // command buffer needs a staging buffer of its own.
+    for (var round = 0; round < 4; round++) {
+      final gpu.DeviceBuffer buffer = gpu.gpuContext.createDeviceBufferWithCopy(
+        Uint8List.fromList(List<int>.generate(300, (int i) => (i + round) % 256)).buffer
+            .asByteData(),
+      );
+      final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+      final Future<ByteData> whole = commandBuffer.readBuffer(wholeBuffer(buffer));
+      final Future<ByteData> part = commandBuffer.readBuffer(
+        gpu.BufferView(buffer, offsetInBytes: 10, lengthInBytes: 20),
+      );
+      await submitAndWait(commandBuffer);
+      expect(
+        (await whole).buffer.asUint8List(),
+        List<int>.generate(300, (int i) => (i + round) % 256),
+        reason: 'round $round',
+      );
+      expect(
+        (await part).buffer.asUint8List(),
+        List<int>.generate(20, (int i) => (i + 10 + round) % 256),
+        reason: 'round $round',
+      );
+    }
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
 }

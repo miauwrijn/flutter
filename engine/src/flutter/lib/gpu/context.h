@@ -11,6 +11,7 @@
 
 #include "dart_api.h"
 #include "flutter/lib/gpu/export.h"
+#include "flutter/lib/gpu/readback_buffer_pool.h"
 #include "flutter/lib/ui/dart_wrapper.h"
 #include "impeller/renderer/context.h"
 
@@ -60,6 +61,9 @@ class Context : public RefCountedDartWrappable<Context> {
 
   std::shared_ptr<impeller::Context>& GetContextShared();
 
+  /// The staging buffers this context's readbacks reuse.
+  const std::shared_ptr<ReadbackBufferPool>& GetReadbackBufferPool() const;
+
  private:
   /// An Impeller context that takes precedent over the IO state context when
   /// set. This is used to inject the context when running with the Impeller
@@ -67,6 +71,9 @@ class Context : public RefCountedDartWrappable<Context> {
   static std::shared_ptr<impeller::Context> default_context_;
 
   std::shared_ptr<impeller::Context> context_;
+  // Declared after `context_` so pooled buffers are freed first.
+  std::shared_ptr<ReadbackBufferPool> readback_buffer_pool_ =
+      std::make_shared<ReadbackBufferPool>();
 
   FML_DISALLOW_COPY_AND_ASSIGN(Context);
 };

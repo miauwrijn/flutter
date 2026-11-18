@@ -11,6 +11,7 @@
 #include "flutter/lib/gpu/context.h"
 #include "flutter/lib/gpu/device_buffer.h"
 #include "flutter/lib/gpu/export.h"
+#include "flutter/lib/gpu/readback_buffer_pool.h"
 #include "flutter/lib/gpu/texture.h"
 #include "flutter/lib/ui/dart_wrapper.h"
 #include "impeller/geometry/point.h"
@@ -34,6 +35,13 @@ class CommandBuffer : public RefCountedDartWrappable<CommandBuffer> {
                 std::shared_ptr<impeller::CommandBuffer> command_buffer);
 
   std::shared_ptr<impeller::CommandBuffer> GetCommandBuffer();
+
+  /// Makes readbacks reuse staging buffers from [pool]. Without a pool, each
+  /// readback allocates its own.
+  void SetReadbackBufferPool(std::shared_ptr<ReadbackBufferPool> pool);
+
+  /// The pool readback buffers are returned to once read, or null.
+  const std::shared_ptr<ReadbackBufferPool>& GetReadbackBufferPool() const;
 
   /// Ends the open pass, then creates a render pass for [render_target] and
   /// makes it the open pass. Returns null if either step fails.
@@ -130,6 +138,7 @@ class CommandBuffer : public RefCountedDartWrappable<CommandBuffer> {
 
   // Every pass in creation order, which is also execution order. Only the
   // last one can be open.
+  std::shared_ptr<ReadbackBufferPool> readback_buffer_pool_;
   std::vector<Encodable> encodables_;
   bool has_open_pass_ = false;
   // Set when a pass fails to encode as it ends, so that Submit fails.
