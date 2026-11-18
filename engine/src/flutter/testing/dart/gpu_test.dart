@@ -4416,9 +4416,9 @@ void main() async {
     // Every grid cell holds a particle, and the gaps between them stay clear.
     final ByteData bytes = await pixels;
     int pixel(int x, int y) => bytes.getUint32((y * 100 + x) * 4);
-    const int clear = 0x000000FF;
-    for (final int y in <int>[12, 37, 62, 87]) {
-      for (final int x in <int>[12, 37, 62, 87]) {
+    const clear = 0x000000FF;
+    for (final y in <int>[12, 37, 62, 87]) {
+      for (final x in <int>[12, 37, 62, 87]) {
         expect(pixel(x, y), isNot(clear), reason: 'particle at ($x, $y)');
       }
       expect(pixel(25, y), clear, reason: 'gap at (25, $y)');
