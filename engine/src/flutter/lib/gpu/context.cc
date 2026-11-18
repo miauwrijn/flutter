@@ -30,7 +30,8 @@ bool SupportsCompute(const impeller::Context& context) {
     case impeller::Context::BackendType::kVulkan:
       return true;
     case impeller::Context::BackendType::kOpenGLES:
-      return false;
+      // OpenGL ES 3.1 or OpenGL 4.3.
+      return context.GetCapabilities()->SupportsCompute();
   }
   return false;
 }

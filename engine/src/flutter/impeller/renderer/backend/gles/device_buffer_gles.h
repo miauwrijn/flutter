@@ -5,6 +5,7 @@
 #ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_DEVICE_BUFFER_GLES_H_
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_DEVICE_BUFFER_GLES_H_
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 
@@ -27,6 +28,9 @@ class DeviceBufferGLES final
   // |DeviceBuffer|
   ~DeviceBufferGLES() override;
 
+  /// The host-side shadow copy of the buffer. If the GPU wrote the buffer,
+  /// the shadow copy is synchronized from the GPU first, so this must be
+  /// called on the reactor.
   const uint8_t* GetBufferData() const;
 
   void UpdateBufferData(
@@ -44,9 +48,30 @@ class DeviceBufferGLES final
     kArrayBuffer,
     kElementArrayBuffer,
     kUniformBuffer,
+    kShaderStorageBuffer,
+    kCopyReadBuffer,
   };
 
   [[nodiscard]] bool BindAndUploadDataIfNecessary(BindingType type) const;
+
+  /// Records that the GPU may have written this buffer, because a compute
+  /// shader bound it as a storage buffer. Until the next
+  /// `SyncShadowCopyIfNecessary`, the GL buffer is authoritative and the
+  /// shadow copy is stale outside of host writes made since.
+  ///
+  /// Host writes keep working while the buffer is GPU-written: they land in
+  /// the shadow copy and only their dirty range is uploaded.
+  void MarkWrittenByGPU() const;
+
+  /// Whether `MarkWrittenByGPU` was called since the shadow copy was last
+  /// synchronized.
+  bool IsWrittenByGPU() const;
+
+  /// If the GPU wrote this buffer, uploads pending host writes and then reads
+  /// the whole buffer back into the shadow copy. Blocks until the GPU
+  /// finishes writing it. Must be called on the reactor, after a
+  /// `glMemoryBarrier` that covers buffer updates.
+  [[nodiscard]] bool SyncShadowCopyIfNecessary() const;
 
   void Flush(std::optional<Range> range = std::nullopt) const override;
 
@@ -73,6 +98,7 @@ class DeviceBufferGLES final
       IPLR_GUARDED_BY(dirty_range_mutex_) = std::nullopt;
   mutable std::optional<Range> uniform_dirty_range_
       IPLR_GUARDED_BY(dirty_range_mutex_) = std::nullopt;
+  mutable std::atomic<bool> written_by_gpu_ = false;
   mutable bool initialized_ = false;
   mutable bool uniform_initialized_ = false;
 

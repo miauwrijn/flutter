@@ -6,7 +6,9 @@
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_GLES_GLES_H_
 
 // IWYU pragma: begin_exports
-#include "GLES3/gl3.h"
+// gl31.h is a superset of gl3.h. Its compute entry points and enums are only
+// used when the context reports OpenGL ES 3.1 or OpenGL 4.3.
+#include "GLES3/gl31.h"  // nogncheck
 
 // Defines for extension enums.
 #define IMPELLER_GL_CLAMP_TO_BORDER 0x812D

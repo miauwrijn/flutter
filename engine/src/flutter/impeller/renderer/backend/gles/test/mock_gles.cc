@@ -309,6 +309,90 @@ void mockBindTexture(GLenum target, GLuint texture) {
 static_assert(CheckSameSignature<decltype(mockBindTexture),  //
                                  decltype(glBindTexture)>::value);
 
+void mockDispatchCompute(GLuint num_groups_x,
+                         GLuint num_groups_y,
+                         GLuint num_groups_z) {
+  CallMockMethod(&IMockGLESImpl::DispatchCompute, num_groups_x, num_groups_y,
+                 num_groups_z);
+}
+static_assert(CheckSameSignature<decltype(mockDispatchCompute),  //
+                                 decltype(glDispatchCompute)>::value);
+
+void mockMemoryBarrier(GLbitfield barriers) {
+  CallMockMethod(&IMockGLESImpl::MemoryBarrier, barriers);
+}
+static_assert(CheckSameSignature<decltype(mockMemoryBarrier),  //
+                                 decltype(glMemoryBarrier)>::value);
+
+void* mockMapBufferRange(GLenum target,
+                         GLintptr offset,
+                         GLsizeiptr length,
+                         GLbitfield access) {
+  if (auto mock_gles = g_mock_gles.lock()) {
+    if (mock_gles->GetImpl()) {
+      return mock_gles->GetImpl()->MapBufferRange(target, offset, length,
+                                                  access);
+    }
+  }
+  return nullptr;
+}
+static_assert(CheckSameSignature<decltype(mockMapBufferRange),  //
+                                 decltype(glMapBufferRange)>::value);
+
+GLboolean mockUnmapBuffer(GLenum target) {
+  if (auto mock_gles = g_mock_gles.lock()) {
+    if (mock_gles->GetImpl()) {
+      return mock_gles->GetImpl()->UnmapBuffer(target);
+    }
+  }
+  return GL_TRUE;
+}
+static_assert(CheckSameSignature<decltype(mockUnmapBuffer),  //
+                                 decltype(glUnmapBuffer)>::value);
+
+void mockGetIntegeri_v(GLenum target, GLuint index, GLint* data) {
+  CallMockMethod(&IMockGLESImpl::GetIntegeri_v, target, index, data);
+}
+static_assert(CheckSameSignature<decltype(mockGetIntegeri_v),  //
+                                 decltype(glGetIntegeri_v)>::value);
+
+void mockGetProgramInterfaceiv(GLuint program,
+                               GLenum program_interface,
+                               GLenum pname,
+                               GLint* params) {
+  CallMockMethod(&IMockGLESImpl::GetProgramInterfaceiv, program,
+                 program_interface, pname, params);
+}
+static_assert(CheckSameSignature<decltype(mockGetProgramInterfaceiv),  //
+                                 decltype(glGetProgramInterfaceiv)>::value);
+
+void mockGetProgramResourceName(GLuint program,
+                                GLenum program_interface,
+                                GLuint index,
+                                GLsizei buf_size,
+                                GLsizei* length,
+                                GLchar* name) {
+  CallMockMethod(&IMockGLESImpl::GetProgramResourceName, program,
+                 program_interface, index, buf_size, length, name);
+}
+static_assert(CheckSameSignature<decltype(mockGetProgramResourceName),  //
+                                 decltype(glGetProgramResourceName)>::value);
+
+void mockGetProgramResourceiv(GLuint program,
+                              GLenum program_interface,
+                              GLuint index,
+                              GLsizei prop_count,
+                              const GLenum* props,
+                              GLsizei count,
+                              GLsizei* length,
+                              GLint* params) {
+  CallMockMethod(&IMockGLESImpl::GetProgramResourceiv, program,
+                 program_interface, index, prop_count, props, count, length,
+                 params);
+}
+static_assert(CheckSameSignature<decltype(mockGetProgramResourceiv),  //
+                                 decltype(glGetProgramResourceiv)>::value);
+
 void mockBindBufferRange(GLenum target,
                          GLuint index,
                          GLuint buffer,
@@ -774,6 +858,22 @@ const ProcTableGLES::Resolver kMockResolverGLES = [](const char* name) {
     return reinterpret_cast<void*>(mockVertexAttribDivisor);
   } else if (strcmp(name, "glBindBufferRange") == 0) {
     return reinterpret_cast<void*>(mockBindBufferRange);
+  } else if (strcmp(name, "glDispatchCompute") == 0) {
+    return reinterpret_cast<void*>(mockDispatchCompute);
+  } else if (strcmp(name, "glMemoryBarrier") == 0) {
+    return reinterpret_cast<void*>(mockMemoryBarrier);
+  } else if (strcmp(name, "glMapBufferRange") == 0) {
+    return reinterpret_cast<void*>(mockMapBufferRange);
+  } else if (strcmp(name, "glUnmapBuffer") == 0) {
+    return reinterpret_cast<void*>(mockUnmapBuffer);
+  } else if (strcmp(name, "glGetIntegeri_v") == 0) {
+    return reinterpret_cast<void*>(mockGetIntegeri_v);
+  } else if (strcmp(name, "glGetProgramInterfaceiv") == 0) {
+    return reinterpret_cast<void*>(mockGetProgramInterfaceiv);
+  } else if (strcmp(name, "glGetProgramResourceName") == 0) {
+    return reinterpret_cast<void*>(mockGetProgramResourceName);
+  } else if (strcmp(name, "glGetProgramResourceiv") == 0) {
+    return reinterpret_cast<void*>(mockGetProgramResourceiv);
   } else if (strcmp(name, "glGetProgramiv") == 0) {
     return reinterpret_cast<void*>(mockGetProgramiv);
   } else if (strcmp(name, "glGetActiveUniformBlockiv") == 0) {

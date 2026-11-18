@@ -9,6 +9,7 @@
 
 #include "impeller/base/allocation.h"
 #include "impeller/base/config.h"
+#include "impeller/base/validation.h"
 
 namespace impeller {
 
@@ -130,12 +131,22 @@ static GLenum ToTarget(DeviceBufferGLES::BindingType type) {
       return GL_ELEMENT_ARRAY_BUFFER;
     case DeviceBufferGLES::BindingType::kUniformBuffer:
       return GL_UNIFORM_BUFFER;
+    case DeviceBufferGLES::BindingType::kShaderStorageBuffer:
+      return GL_SHADER_STORAGE_BUFFER;
+    case DeviceBufferGLES::BindingType::kCopyReadBuffer:
+      return GL_COPY_READ_BUFFER;
   }
   FML_UNREACHABLE();
 }
 
 bool DeviceBufferGLES::BindAndUploadDataIfNecessary(BindingType type) const {
   if (!reactor_) {
+    return false;
+  }
+
+  // The separate uniform buffer is filled from the shadow copy, which is
+  // stale while the GPU-written main buffer is authoritative.
+  if (UsesUniformBuffer(type) && !SyncShadowCopyIfNecessary()) {
     return false;
   }
 
@@ -207,12 +218,68 @@ bool DeviceBufferGLES::SetLabel(std::string_view label, Range range) {
 }
 
 const uint8_t* DeviceBufferGLES::GetBufferData() const {
+  if (!SyncShadowCopyIfNecessary()) {
+    VALIDATION_LOG << "Could not read a GPU-written buffer back into its "
+                      "shadow copy. Its contents are stale.";
+  }
   return backing_store_->GetBuffer();
+}
+
+void DeviceBufferGLES::MarkWrittenByGPU() const {
+  written_by_gpu_.store(true);
+}
+
+bool DeviceBufferGLES::IsWrittenByGPU() const {
+  return written_by_gpu_.load();
+}
+
+bool DeviceBufferGLES::SyncShadowCopyIfNecessary() const {
+  if (!written_by_gpu_.load()) {
+    return true;
+  }
+  if (!reactor_ || !handle_.has_value()) {
+    // Nothing was ever uploaded, so the GPU cannot have written it.
+    written_by_gpu_.store(false);
+    return true;
+  }
+  const ProcTableGLES& gl = reactor_->GetProcTable();
+  if (!gl.MapBufferRange.IsAvailable() || !gl.UnmapBuffer.IsAvailable()) {
+    return false;
+  }
+  // Upload host writes made while the buffer was GPU-written, so the read
+  // below returns them along with the GPU's writes.
+  if (!BindAndUploadDataIfNecessary(BindingType::kCopyReadBuffer)) {
+    return false;
+  }
+  const size_t size = backing_store_->GetLength().GetByteSize();
+  if (size > 0) {
+    void* mapped =
+        gl.MapBufferRange(GL_COPY_READ_BUFFER, 0, size, GL_MAP_READ_BIT);
+    if (!mapped) {
+      return false;
+    }
+    std::memcpy(backing_store_->GetBuffer(), mapped, size);
+    gl.UnmapBuffer(GL_COPY_READ_BUFFER);
+  }
+  gl.BindBuffer(GL_COPY_READ_BUFFER, 0);
+  written_by_gpu_.store(false);
+  // The separate uniform buffer has to pick up what the GPU wrote.
+  if (separate_uniform_buffer_) {
+    Lock lock(dirty_range_mutex_);
+    uniform_dirty_range_ = Range{0, size};
+  }
+  return true;
 }
 
 void DeviceBufferGLES::UpdateBufferData(
     const std::function<void(uint8_t* data, size_t length)>&
         update_buffer_data) {
+  // The update writes part of the shadow copy, and then the whole of it is
+  // uploaded, so the rest has to be current first.
+  if (!SyncShadowCopyIfNecessary()) {
+    VALIDATION_LOG << "Could not read a GPU-written buffer back into its "
+                      "shadow copy before updating it.";
+  }
   if (update_buffer_data) {
     update_buffer_data(backing_store_->GetBuffer(),
                        backing_store_->GetLength().GetByteSize());

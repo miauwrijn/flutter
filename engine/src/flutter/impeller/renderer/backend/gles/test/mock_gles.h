@@ -131,6 +131,36 @@ class IMockGLESImpl {
                                GLuint buffer,
                                GLintptr offset,
                                GLsizeiptr size) {}
+  virtual void DispatchCompute(GLuint num_groups_x,
+                               GLuint num_groups_y,
+                               GLuint num_groups_z) {}
+  virtual void MemoryBarrier(GLbitfield barriers) {}
+  virtual void* MapBufferRange(GLenum target,
+                               GLintptr offset,
+                               GLsizeiptr length,
+                               GLbitfield access) {
+    return nullptr;
+  }
+  virtual GLboolean UnmapBuffer(GLenum target) { return GL_TRUE; }
+  virtual void GetIntegeri_v(GLenum target, GLuint index, GLint* data) {}
+  virtual void GetProgramInterfaceiv(GLuint program,
+                                     GLenum program_interface,
+                                     GLenum pname,
+                                     GLint* params) {}
+  virtual void GetProgramResourceName(GLuint program,
+                                      GLenum program_interface,
+                                      GLuint index,
+                                      GLsizei buf_size,
+                                      GLsizei* length,
+                                      GLchar* name) {}
+  virtual void GetProgramResourceiv(GLuint program,
+                                    GLenum program_interface,
+                                    GLuint index,
+                                    GLsizei prop_count,
+                                    const GLenum* props,
+                                    GLsizei count,
+                                    GLsizei* length,
+                                    GLint* params) {}
   virtual void GetProgramiv(GLuint program, GLenum pname, GLint* params) {}
   virtual void GetActiveUniformBlockiv(GLuint program,
                                        GLuint uniformBlockIndex,
@@ -367,6 +397,46 @@ class MockGLESImpl : public IMockGLESImpl {
                GLuint buffer,
                GLintptr offset,
                GLsizeiptr size),
+              (override));
+  MOCK_METHOD(void,
+              DispatchCompute,
+              (GLuint num_groups_x, GLuint num_groups_y, GLuint num_groups_z),
+              (override));
+  MOCK_METHOD(void, MemoryBarrier, (GLbitfield barriers), (override));
+  MOCK_METHOD(
+      void*,
+      MapBufferRange,
+      (GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access),
+      (override));
+  MOCK_METHOD(GLboolean, UnmapBuffer, (GLenum target), (override));
+  MOCK_METHOD(void,
+              GetIntegeri_v,
+              (GLenum target, GLuint index, GLint* data),
+              (override));
+  MOCK_METHOD(
+      void,
+      GetProgramInterfaceiv,
+      (GLuint program, GLenum program_interface, GLenum pname, GLint* params),
+      (override));
+  MOCK_METHOD(void,
+              GetProgramResourceName,
+              (GLuint program,
+               GLenum program_interface,
+               GLuint index,
+               GLsizei buf_size,
+               GLsizei* length,
+               GLchar* name),
+              (override));
+  MOCK_METHOD(void,
+              GetProgramResourceiv,
+              (GLuint program,
+               GLenum program_interface,
+               GLuint index,
+               GLsizei prop_count,
+               const GLenum* props,
+               GLsizei count,
+               GLsizei* length,
+               GLint* params),
               (override));
   MOCK_METHOD(void,
               GetProgramiv,

@@ -278,6 +278,53 @@ CapabilitiesGLES::CapabilitiesGLES(const ProcTableGLES& gl) {
     max_sampler_anisotropy_ = static_cast<uint32_t>(std::max(value, 2.0f));
   }
 
+  // Compute is core in OpenGL ES 3.1 and OpenGL 4.3. Gate on the resolved
+  // procs too, so that a context that reports the version without providing
+  // the entry points is treated as unsupported.
+  supports_compute_ =
+      desc->GetGlVersion().IsAtLeast(desc->IsES() ? Version(3, 1)
+                                                  : Version(4, 3)) &&
+      gl.DispatchCompute.IsAvailable() && gl.MemoryBarrier.IsAvailable() &&
+      gl.GetProgramResourceIndex.IsAvailable() &&
+      gl.GetProgramResourceiv.IsAvailable() &&
+      gl.GetProgramInterfaceiv.IsAvailable() &&
+      gl.GetProgramResourceName.IsAvailable() &&
+      gl.MapBufferRange.IsAvailable() && gl.UnmapBuffer.IsAvailable() &&
+      gl.GetIntegeri_v.IsAvailable();
+  if (supports_compute_) {
+    for (GLuint i = 0; i < 3; i++) {
+      GLint value = 0;
+      gl.GetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_COUNT, i, &value);
+      compute_limits_.max_workgroup_count[i] = static_cast<uint32_t>(value);
+      value = 0;
+      gl.GetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, i, &value);
+      compute_limits_.max_workgroup_size[i] = static_cast<uint32_t>(value);
+    }
+    GLint value = 0;
+    gl.GetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &value);
+    compute_limits_.max_workgroup_invocations = static_cast<uint32_t>(value);
+    value = 0;
+    gl.GetIntegerv(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE, &value);
+    compute_limits_.max_shared_memory_size = static_cast<size_t>(value);
+    value = 0;
+    gl.GetIntegerv(GL_MAX_COMPUTE_TEXTURE_IMAGE_UNITS, &value);
+    max_compute_texture_image_units = value;
+    value = 0;
+    gl.GetIntegerv(GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS, &value);
+    max_compute_shader_storage_blocks = value;
+    value = 0;
+    gl.GetIntegerv(GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS, &value);
+    max_vertex_shader_storage_blocks = value;
+    value = 0;
+    gl.GetIntegerv(GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS, &value);
+    max_fragment_shader_storage_blocks = value;
+    value = 0;
+    gl.GetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &value);
+    if (value > 0) {
+      storage_buffer_offset_alignment_ = static_cast<size_t>(value);
+    }
+  }
+
   // The KHR and ARB parallel shader compile extensions share the same enum for
   // the maximum number of compiler threads.
   if (desc->HasExtension(kParallelShaderCompileKHRExt) ||
@@ -328,8 +375,23 @@ size_t CapabilitiesGLES::GetMaxTextureUnits(ShaderStage stage) const {
       return max_vertex_texture_image_units;
     case ShaderStage::kFragment:
       return max_texture_image_units;
-    case ShaderStage::kUnknown:
     case ShaderStage::kCompute:
+      return max_compute_texture_image_units;
+    case ShaderStage::kUnknown:
+      return 0u;
+  }
+  FML_UNREACHABLE();
+}
+
+size_t CapabilitiesGLES::GetMaxShaderStorageBlocks(ShaderStage stage) const {
+  switch (stage) {
+    case ShaderStage::kVertex:
+      return max_vertex_shader_storage_blocks;
+    case ShaderStage::kFragment:
+      return max_fragment_shader_storage_blocks;
+    case ShaderStage::kCompute:
+      return max_compute_shader_storage_blocks;
+    case ShaderStage::kUnknown:
       return 0u;
   }
   FML_UNREACHABLE();
@@ -356,7 +418,7 @@ bool CapabilitiesGLES::SupportsFramebufferFetch() const {
 }
 
 bool CapabilitiesGLES::SupportsCompute() const {
-  return false;
+  return supports_compute_;
 }
 
 bool CapabilitiesGLES::SupportsComputeSubgroups() const {
@@ -456,10 +518,15 @@ bool CapabilitiesGLES::NeedsPartitionedHostBuffer() const {
 #endif
 }
 
-// The OpenGL ES backend does not support compute, so it reports no compute
-// limits.
+// All zero where compute is not supported.
 ComputeLimits CapabilitiesGLES::GetComputeLimits() const {
-  return {};
+  return compute_limits_;
+}
+
+size_t CapabilitiesGLES::GetMinimumStorageBufferAlignment() const {
+  // Uniforms and storage buffers share host buffers, so honor both.
+  return std::max(GetMinimumUniformAlignment(),
+                  storage_buffer_offset_alignment_);
 }
 
 }  // namespace impeller

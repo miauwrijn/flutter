@@ -4,12 +4,15 @@
 
 #include "flutter/lib/gpu/compute_pipeline.h"
 
+#include <future>
 #include <optional>
 #include <utility>
 
+#include "flutter/fml/make_copyable.h"
 #include "impeller/renderer/capabilities.h"
 #include "impeller/renderer/pipeline_library.h"
 #include "impeller/renderer/shader_library.h"
+#include "lib/ui/ui_dart_state.h"
 #include "third_party/abseil-cpp/absl/status/status.h"
 #include "third_party/abseil-cpp/absl/strings/str_cat.h"
 #include "tonic/converter/dart_converter.h"
@@ -83,8 +86,26 @@ ComputePipeline::GetOrCreatePipeline(impeller::Context& context) {
     return status;
   }
 
-  std::shared_ptr<BackendComputePipeline> pipeline =
-      context.GetPipelineLibrary()->GetPipeline(desc, /*async=*/false).Get();
+  std::shared_ptr<BackendComputePipeline> pipeline;
+  if (context.GetBackendType() == impeller::Context::BackendType::kOpenGLES) {
+    // OpenGL ES programs are linked on the reactor, which reacts on the
+    // raster thread, so build the pipeline there and wait for it, as render
+    // pipelines do.
+    auto dart_state = flutter::UIDartState::Current();
+    std::promise<std::shared_ptr<BackendComputePipeline>> promise;
+    auto future = promise.get_future();
+    fml::TaskRunner::RunNowOrPostTask(
+        dart_state->GetTaskRunners().GetRasterTaskRunner(),
+        fml::MakeCopyable([promise = std::move(promise),
+                           library = context.GetPipelineLibrary(),
+                           desc]() mutable {
+          promise.set_value(library->GetPipeline(desc, /*async=*/false).Get());
+        }));
+    pipeline = future.get();
+  } else {
+    pipeline =
+        context.GetPipelineLibrary()->GetPipeline(desc, /*async=*/false).Get();
+  }
   if (!pipeline) {
     // On Metal a pipeline can allow fewer invocations per workgroup than the
     // device, for example when the shader uses many registers. That is only

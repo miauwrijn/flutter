@@ -116,6 +116,11 @@ class PipelineLibraryGLES final
 
   std::shared_ptr<ReactorGLES> reactor_;
   PipelineMap pipelines_;
+  // Guarded separately from `pipelines_`: compute pipelines are created from
+  // the raster thread on behalf of Flutter GPU.
+  Mutex compute_pipelines_mutex_;
+  ComputePipelineMap compute_pipelines_
+      IPLR_GUARDED_BY(compute_pipelines_mutex_);
   Mutex programs_mutex_;
   ProgramMap programs_ IPLR_GUARDED_BY(programs_mutex_);
   std::shared_ptr<PipelineCompileQueueGLES> compile_queue_;

@@ -39,28 +39,41 @@ std::unique_ptr<Context> Display::CreateContext(const Config& config,
                                                 const Context* share_context) {
   const auto& desc = config.GetDescriptor();
 
-  std::vector<EGLint> attributes;
+  const EGLContext share =
+      share_context != nullptr ? share_context->GetHandle() : nullptr;
+  EGLContext context = EGL_NO_CONTEXT;
   switch (desc.api) {
-    case API::kOpenGL:
+    case API::kOpenGL: {
+      const EGLint attributes[] = {EGL_NONE};
+      context =
+          ::eglCreateContext(display_, config.GetHandle(), share, attributes);
       break;
-    case API::kOpenGLES2:
-      attributes.push_back(EGL_CONTEXT_CLIENT_VERSION);
-      attributes.push_back(2);
+    }
+    case API::kOpenGLES2: {
+      const EGLint attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+      context =
+          ::eglCreateContext(display_, config.GetHandle(), share, attributes);
       break;
-    case API::kOpenGLES3:
-      attributes.push_back(EGL_CONTEXT_CLIENT_VERSION);
-      attributes.push_back(3);
+    }
+    case API::kOpenGLES3: {
+      // Ask for OpenGL ES 3.1, which adds compute, first. Many drivers
+      // already return their highest version for a 3.0 request, but some,
+      // such as ANGLE, return exactly the version asked for. Without
+      // EGL_KHR_create_context or EGL 1.5 the minor version attribute is
+      // rejected, and 3.0 is requested instead.
+      const EGLint attributes_31[] = {EGL_CONTEXT_MAJOR_VERSION, 3,
+                                      EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
+      context = ::eglCreateContext(display_, config.GetHandle(), share,
+                                   attributes_31);
+      if (context == EGL_NO_CONTEXT) {
+        const EGLint attributes_30[] = {EGL_CONTEXT_CLIENT_VERSION, 3,
+                                        EGL_NONE};
+        context = ::eglCreateContext(display_, config.GetHandle(), share,
+                                     attributes_30);
+      }
       break;
+    }
   }
-  // Termination sentinel must be present.
-  attributes.push_back(EGL_NONE);
-
-  auto context = ::eglCreateContext(
-      display_,            // display
-      config.GetHandle(),  // config
-      share_context != nullptr ? share_context->GetHandle() : nullptr,  // share
-      attributes.data()  // attributes
-  );
 
   if (context == EGL_NO_CONTEXT) {
     IMPELLER_LOG_EGL_ERROR;

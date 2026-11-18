@@ -70,12 +70,31 @@ static void fl_opengl_manager_init(FlOpenGLManager* self) {
   EGLint num_config = 0;
   eglChooseConfig(self->display, config_attributes, &config, 1, &num_config);
 
-  const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-
-  self->render_context = eglCreateContext(self->display, config, EGL_NO_CONTEXT,
-                                          context_attributes);
+  // Ask for the newest OpenGL ES version first: 3.1 adds compute, which
+  // Flutter GPU uses. Some drivers return exactly the version asked for. The
+  // 3.1 attributes need EGL_KHR_create_context or EGL 1.5 and are rejected
+  // without them, in which case an older version is requested.
+  static const EGLint context_attributes_31[] = {
+      EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
+  static const EGLint context_attributes_30[] = {EGL_CONTEXT_CLIENT_VERSION, 3,
+                                                 EGL_NONE};
+  static const EGLint context_attributes_20[] = {EGL_CONTEXT_CLIENT_VERSION, 2,
+                                                 EGL_NONE};
+  const EGLint* context_attributes = nullptr;
+  self->render_context = EGL_NO_CONTEXT;
+  const EGLint* const attribute_lists[] = {
+      context_attributes_31, context_attributes_30, context_attributes_20};
+  for (const EGLint* attributes : attribute_lists) {
+    self->render_context =
+        eglCreateContext(self->display, config, EGL_NO_CONTEXT, attributes);
+    if (self->render_context != EGL_NO_CONTEXT) {
+      context_attributes = attributes;
+      break;
+    }
+  }
   if (self->render_context == EGL_NO_CONTEXT) {
     g_warning("Failed to create EGL context for rendering");
+    context_attributes = context_attributes_20;
   }
 
   self->resource_context = eglCreateContext(

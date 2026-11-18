@@ -142,6 +142,12 @@ ProcTableGLES::ProcTableGLES(  // NOLINT(google-readability-function-size)
     FOR_EACH_IMPELLER_GLES3_PROC(IMPELLER_PROC);
   }
 
+  // Compute is core in OpenGL ES 3.1 and OpenGL 4.3.
+  if (description_->GetGlVersion().IsAtLeast(
+          description_->IsES() ? Version(3, 1) : Version(4, 3))) {
+    FOR_EACH_IMPELLER_COMPUTE_PROC(IMPELLER_PROC);
+  }
+
   // 2D array textures need the 3D texture entry points. They are core on
   // GL/GLES 3.0, exposed on desktop GL 2.x through GL_EXT_texture_array (which
   // uses the same entry-point names), and on OpenGL ES 2.0 through

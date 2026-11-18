@@ -65,6 +65,19 @@ class CapabilitiesGLES final
   // Must be at least 128.
   size_t max_vertex_uniform_vectors = 128;
 
+  /// The value of GL_MAX_COMPUTE_TEXTURE_IMAGE_UNITS, or 0 without compute.
+  size_t max_compute_texture_image_units = 0;
+
+  /// The value of GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS, or 0 without compute.
+  size_t max_compute_shader_storage_blocks = 0;
+
+  /// The value of GL_MAX_VERTEX_SHADER_STORAGE_BLOCKS. OpenGL ES 3.1 allows 0.
+  size_t max_vertex_shader_storage_blocks = 0;
+
+  /// The value of GL_MAX_FRAGMENT_SHADER_STORAGE_BLOCKS. OpenGL ES 3.1 allows
+  /// 0.
+  size_t max_fragment_shader_storage_blocks = 0;
+
   // Must be at least display size.
   ISize max_viewport_dims;
 
@@ -195,7 +208,16 @@ class CapabilitiesGLES final
   // |Capabilities|
   ComputeLimits GetComputeLimits() const override;
 
+  // |Capabilities|
+  size_t GetMinimumStorageBufferAlignment() const override;
+
+  /// The maximum number of storage blocks a shader of [stage] can declare.
+  size_t GetMaxShaderStorageBlocks(ShaderStage stage) const;
+
  private:
+  bool supports_compute_ = false;
+  ComputeLimits compute_limits_;
+  size_t storage_buffer_offset_alignment_ = 256;
   bool supports_texture_to_texture_blits_ = false;
   bool supports_framebuffer_fetch_ = false;
   bool supports_decal_sampler_address_mode_ = false;

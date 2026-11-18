@@ -1620,11 +1620,10 @@ void main() async {
     );
   }, skip: !(impellerEnabled && flutterGpuEnabled));
 
-  test('GpuContext.supportsCompute is true on Metal and Vulkan only', () async {
-    expect(
-      gpu.gpuContext.supportsCompute,
-      impellerBackend == 'metal' || impellerBackend == 'vulkan',
-    );
+  test('GpuContext.supportsCompute is true on Metal, Vulkan and OpenGL ES 3.1', () async {
+    // flutter_tester_opengles creates an OpenGL ES 3.1 context through
+    // SwiftShader, so compute is supported on every backend tested here.
+    expect(gpu.gpuContext.supportsCompute, isTrue);
   }, skip: !(impellerEnabled && flutterGpuEnabled));
 
   test('Compute throws where GpuContext.supportsCompute is false', () async {

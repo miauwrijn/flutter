@@ -342,10 +342,11 @@ base class GpuContext extends NativeFieldWrapperClass1 {
   /// Whether this context supports compute: [ComputePipeline],
   /// [ComputePass] and storage buffers.
   ///
-  /// True on Metal and Vulkan. False on OpenGL ES, where
-  /// [createComputePipeline] and [CommandBuffer.createComputePass] throw. An
-  /// app that uses compute checks this and takes its own non-compute path
-  /// where it is false.
+  /// True on Metal and Vulkan, and on OpenGL ES 3.1 or OpenGL 4.3 and later.
+  /// False on older OpenGL ES contexts, such as OpenGL ES 3.0 on Windows
+  /// through ANGLE on Direct3D 11, where [createComputePipeline] and
+  /// [CommandBuffer.createComputePass] throw. An app that uses compute checks
+  /// this and takes its own non-compute path where it is false.
   bool get supportsCompute {
     return _getSupportsCompute();
   }

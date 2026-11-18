@@ -8,8 +8,10 @@
 #include <sstream>
 #include <string>
 
+#include "flutter/fml/closure.h"
 #include "flutter/fml/trace_event.h"
 #include "impeller/base/promise.h"
+#include "impeller/renderer/backend/gles/compute_pipeline_gles.h"
 #include "impeller/renderer/backend/gles/pipeline_gles.h"
 #include "impeller/renderer/backend/gles/shader_function_gles.h"
 #include "impeller/renderer/pipeline_descriptor.h"
@@ -437,14 +439,127 @@ PipelineFuture<PipelineDescriptor> PipelineLibraryGLES::GetPipeline(
   return pipeline_future;
 }
 
+// Compiles and links the compute shader of [desc] into a program, and reads
+// its bindings. Runs on the reactor. Returns null on failure, after logging
+// the reason.
+static std::shared_ptr<Pipeline<ComputePipelineDescriptor>>
+CreateComputePipeline(const std::shared_ptr<ReactorGLES>& reactor,
+                      const std::weak_ptr<PipelineLibrary>& weak_library,
+                      const ComputePipelineDescriptor& desc) {
+  TRACE_EVENT0("impeller", "CreateComputePipelineGLES");
+  const ProcTableGLES& gl = reactor->GetProcTable();
+  const std::shared_ptr<const ShaderFunction> function =
+      desc.GetStageEntrypoint();
+  if (!function || function->GetStage() != ShaderStage::kCompute) {
+    VALIDATION_LOG << "The compute pipeline '" << desc.GetLabel()
+                   << "' has no compute shader.";
+    return nullptr;
+  }
+  const std::shared_ptr<const fml::Mapping>& mapping =
+      ShaderFunctionGLES::Cast(*function).GetSourceMapping();
+  if (!mapping) {
+    VALIDATION_LOG << "The compute shader for '" << desc.GetLabel()
+                   << "' has no source.";
+    return nullptr;
+  }
+
+  auto handle =
+      std::make_shared<UniqueHandleGLES>(reactor, HandleType::kProgram);
+  std::optional<GLuint> program = reactor->GetGLHandle(handle->Get());
+  if (!program.has_value()) {
+    VALIDATION_LOG << "Could not obtain a program handle.";
+    return nullptr;
+  }
+
+  GLuint shader = gl.CreateShader(GL_COMPUTE_SHADER);
+  if (shader == 0) {
+    VALIDATION_LOG << "Could not create a compute shader handle.";
+    return nullptr;
+  }
+  fml::ScopedCleanupClosure delete_shader(
+      [&gl, shader]() { gl.DeleteShader(shader); });
+  gl.SetDebugLabel(DebugResourceType::kShader, shader,
+                   absl::StrCat(desc.GetLabel(), " Compute Shader"));
+  gl.ShaderSourceMapping(shader, *mapping);
+  gl.CompileShader(shader);
+  GLint compile_status = GL_FALSE;
+  gl.GetShaderiv(shader, GL_COMPILE_STATUS, &compile_status);
+  if (compile_status != GL_TRUE) {
+    VALIDATION_LOG << GetShaderCompilationFailureMessage(
+        gl, shader, desc.GetLabel(), ShaderStage::kCompute);
+    return nullptr;
+  }
+
+  gl.AttachShader(program.value(), shader);
+  gl.LinkProgram(program.value());
+  gl.DetachShader(program.value(), shader);
+  GLint link_status = GL_FALSE;
+  gl.GetProgramiv(program.value(), GL_LINK_STATUS, &link_status);
+  if (link_status != GL_TRUE) {
+    VALIDATION_LOG << "Could not link the compute program for '"
+                   << desc.GetLabel()
+                   << "': " << gl.GetProgramInfoLogString(program.value())
+                   << "\nCompute Shader:\n"
+                   << GetShaderSource(gl, shader);
+    return nullptr;
+  }
+
+  auto bindings = std::make_unique<BufferBindingsGLES>();
+  if (!bindings->ReadUniformsBindings(gl, program.value()) ||
+      !bindings->ReadStorageBlockBindings(gl, program.value())) {
+    VALIDATION_LOG << "Could not read the bindings of the compute program for '"
+                   << desc.GetLabel() << "'.";
+    return nullptr;
+  }
+
+  return ComputePipelineGLES::Create(reactor, weak_library, desc,
+                                     std::move(handle), std::move(bindings));
+}
+
 // |PipelineLibrary|
 PipelineFuture<ComputePipelineDescriptor> PipelineLibraryGLES::GetPipeline(
     ComputePipelineDescriptor descriptor,
     bool async) {
+  {
+    Lock lock(compute_pipelines_mutex_);
+    if (auto found = compute_pipelines_.find(descriptor);
+        found != compute_pipelines_.end()) {
+      return found->second;
+    }
+  }
+  if (!reactor_ || !reactor_->GetProcTable().GetCapabilities() ||
+      !reactor_->GetProcTable().GetCapabilities()->SupportsCompute()) {
+    return {
+        descriptor,
+        RealizedFuture<std::shared_ptr<Pipeline<ComputePipelineDescriptor>>>(
+            nullptr)};
+  }
+
   auto promise = std::make_shared<
       std::promise<std::shared_ptr<Pipeline<ComputePipelineDescriptor>>>>();
-  promise->set_value(nullptr);
-  return {descriptor, promise->get_future()};
+  auto pipeline_future = PipelineFuture<ComputePipelineDescriptor>{
+      descriptor, promise->get_future()};
+  {
+    Lock lock(compute_pipelines_mutex_);
+    auto [found, inserted] =
+        compute_pipelines_.try_emplace(descriptor, pipeline_future);
+    if (!inserted) {
+      return found->second;
+    }
+  }
+
+  // Programs are compiled on the reactor. On a thread that can react, which is
+  // where Flutter GPU creates compute pipelines, this runs immediately.
+  const bool added = reactor_->AddOperation([promise, reactor = reactor_,
+                                             weak_library = weak_from_this(),
+                                             descriptor](const ReactorGLES&) {
+    promise->set_value(
+        CreateComputePipeline(reactor, weak_library, descriptor));
+  });
+  if (!added) {
+    promise->set_value(nullptr);
+  }
+  return pipeline_future;
 }
 
 // |PipelineLibrary|
@@ -475,6 +590,20 @@ void PipelineLibraryGLES::RemovePipelinesWithEntryPoint(
       it = pipelines_.erase(it);
     } else {
       it++;
+    }
+  }
+
+  if (function->GetStage() == ShaderStage::kCompute) {
+    Lock compute_lock(compute_pipelines_mutex_);
+    for (auto compute_it = compute_pipelines_.begin();
+         compute_it != compute_pipelines_.end();) {
+      const std::shared_ptr<const ShaderFunction> entrypoint =
+          compute_it->first.GetStageEntrypoint();
+      if (entrypoint && entrypoint->IsEqual(*function)) {
+        compute_it = compute_pipelines_.erase(compute_it);
+      } else {
+        compute_it++;
+      }
     }
   }
 }

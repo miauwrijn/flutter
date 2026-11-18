@@ -120,9 +120,8 @@ class CommandBuffer : public RefCountedDartWrappable<CommandBuffer> {
 
   /// Ends the pass that is recording, if any. On Metal and Vulkan the pass is
   /// encoded now, which ends its backend encoder. On OpenGL ES every pass is
-  /// encoded in creation order at submit, on the raster thread. (OpenGL ES
-  /// never records compute passes, since Flutter GPU does not support compute
-  /// there.)
+  /// encoded in creation order at submit, on the raster thread, compute
+  /// passes included.
   bool EndOpenPass();
 
   std::shared_ptr<impeller::BlitPass> GetOrCreateBlitPass();

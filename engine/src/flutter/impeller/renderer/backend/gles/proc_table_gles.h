@@ -272,7 +272,23 @@ void(glDepthRange)(GLdouble n, GLdouble f);
   PROC(InvalidateFramebuffer);             \
   PROC(VertexAttribDivisor);               \
   PROC(DrawArraysInstanced);               \
-  PROC(DrawElementsInstanced);
+  PROC(DrawElementsInstanced);             \
+  PROC(MapBufferRange);                    \
+  PROC(UnmapBuffer);                       \
+  PROC(CopyBufferSubData);                 \
+  PROC(GetIntegeri_v);                     \
+  PROC(TexStorage2D);
+
+// Compute entry points, core in OpenGL ES 3.1 and OpenGL 4.3. Resolved only on
+// those versions; see `CapabilitiesGLES::SupportsCompute`.
+#define FOR_EACH_IMPELLER_COMPUTE_PROC(PROC) \
+  PROC(DispatchCompute);                     \
+  PROC(MemoryBarrier);                       \
+  PROC(BindImageTexture);                    \
+  PROC(GetProgramInterfaceiv);               \
+  PROC(GetProgramResourceIndex);             \
+  PROC(GetProgramResourceName);              \
+  PROC(GetProgramResourceiv);
 
 // 3D texture entry points, used by 2D array textures. These are core on
 // GL/GLES 3.0 and also reachable below it: desktop GL 2.x exposes these exact
@@ -330,6 +346,7 @@ class ProcTableGLES {
   FOR_EACH_IMPELLER_ES_ONLY_PROC(IMPELLER_PROC);
   FOR_EACH_IMPELLER_DESKTOP_ONLY_PROC(IMPELLER_PROC);
   FOR_EACH_IMPELLER_GLES3_PROC(IMPELLER_PROC);
+  FOR_EACH_IMPELLER_COMPUTE_PROC(IMPELLER_PROC);
   FOR_EACH_IMPELLER_TEXTURE_ARRAY_PROC(IMPELLER_PROC);
   FOR_EACH_IMPELLER_EXT_PROC(IMPELLER_PROC);
 

@@ -223,8 +223,11 @@ bool BlitCopyBufferToTextureCommandGLES::Encode(
     gl.BindTexture(texture_type, 0u);
   }
   gl.BindTexture(texture_type, gl_handle.value());
+  // Read through the shadow copy accessor, which synchronizes it first if a
+  // compute shader wrote the buffer.
   const GLvoid* tex_data =
-      source.GetBuffer()->OnGetContents() + source.GetRange().offset;
+      DeviceBufferGLES::Cast(*source.GetBuffer()).GetBufferData() +
+      source.GetRange().offset;
 
   // Block-compressed textures cannot be allocated empty and then filled with a
   // sub-image; glCompressedTexImage2D redefines the entire mip level. Require
@@ -348,15 +351,12 @@ std::string BlitCopyBufferToBufferCommandGLES::GetLabel() const {
 
 bool BlitCopyBufferToBufferCommandGLES::Encode(
     const ReactorGLES& reactor) const {
-  // On OpenGL ES the host-side shadow copy of a buffer is authoritative: the
-  // GPU never writes to buffers, and every other write (host writes and
-  // texture-to-buffer copies, which read pixels synchronously) lands in the
-  // shadow copy. Copying between shadow copies here, in reactor order, keeps
-  // the copy ordered with the other commands, and marks the destination range
-  // dirty so the next GPU use of it uploads the new bytes.
-  //
-  // This has to change to glCopyBufferSubData once GPU writes to buffers
-  // (compute on OpenGL ES 3.1) exist.
+  // Copy between the host-side shadow copies, in reactor order, which keeps
+  // the copy ordered with the other commands. Reading the source's shadow copy
+  // synchronizes it first if a compute shader wrote the buffer, and the
+  // destination range is marked dirty so that its next GPU use uploads it.
+  // Copies through the host are fine here: buffer copies are used for
+  // readback, where the bytes end up on the host anyway.
   const auto& source_gles = DeviceBufferGLES::Cast(*source.GetBuffer());
   return DeviceBufferGLES::Cast(*destination)
       .WriteBufferData(source_gles.GetBufferData(), source.GetRange(),

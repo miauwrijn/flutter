@@ -71,11 +71,18 @@ class TesterGLESDelegate : public GPUSurfaceGLDelegate {
       return absl::InternalError("Could not choose EGL config.");
     }
 
-    const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 3,
-                                         EGL_NONE};
+    // Prefer OpenGL ES 3.1, which adds compute, and fall back to 3.0.
+    const EGLint context_attributes_31[] = {
+        EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 1, EGL_NONE};
+    const EGLint context_attributes_30[] = {EGL_CONTEXT_CLIENT_VERSION, 3,
+                                            EGL_NONE};
 
-    EGLContext context =
-        ::eglCreateContext(display, config, EGL_NO_CONTEXT, context_attributes);
+    EGLContext context = ::eglCreateContext(display, config, EGL_NO_CONTEXT,
+                                            context_attributes_31);
+    if (context == EGL_NO_CONTEXT) {
+      context = ::eglCreateContext(display, config, EGL_NO_CONTEXT,
+                                   context_attributes_30);
+    }
     if (context == EGL_NO_CONTEXT) {
       return absl::InternalError("Could not create EGL context.");
     }

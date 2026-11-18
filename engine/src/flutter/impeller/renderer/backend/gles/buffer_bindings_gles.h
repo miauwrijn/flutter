@@ -92,6 +92,23 @@ class BufferBindingsGLES {
 
   bool UnbindVertexAttributes(const ProcTableGLES& gl);
 
+  /// Reads the binding point of each active shader storage block of
+  /// [program], which the shader sets with `layout(binding = N)`, since
+  /// OpenGL ES has no `glShaderStorageBlockBinding`.
+  bool ReadStorageBlockBindings(const ProcTableGLES& gl, GLuint program);
+
+  /// Binds the uniform buffers and textures of a compute dispatch, like
+  /// `BindUniformData` does for the vertex and fragment stages.
+  bool BindComputeUniformData(
+      const ProcTableGLES& gl,
+      const std::vector<TextureAndSampler>& bound_textures,
+      const std::vector<BufferResource>& bound_buffers,
+      SamplerStateCache* sampler_cache = nullptr);
+
+  /// Binds [buffer] to the storage block its metadata names. A storage block
+  /// the driver removed because the shader never uses it is skipped.
+  bool BindStorageBuffer(const ProcTableGLES& gl, const BufferResource& buffer);
+
  private:
   FML_FRIEND_TEST(testing::BufferBindingsGLESTest, BindUniformData);
   FML_FRIEND_TEST(testing::BufferBindingsGLESTest, BindArrayData);
@@ -129,6 +146,8 @@ class BufferBindingsGLES {
     GLint data_size = 0;
   };
   absl::flat_hash_map<std::string, UBOInfo> ubo_locations_;
+  // Normalized storage block name to its binding point.
+  absl::flat_hash_map<std::string, GLuint> storage_block_bindings_;
 
   using BindingMap = absl::flat_hash_map<std::string, std::vector<GLint>>;
   BindingMap binding_map_ = {};

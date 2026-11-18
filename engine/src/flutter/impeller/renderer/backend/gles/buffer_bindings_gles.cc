@@ -4,6 +4,7 @@
 
 #include "impeller/renderer/backend/gles/buffer_bindings_gles.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -306,6 +307,91 @@ bool BufferBindingsGLES::BindUniformData(
     return false;
   }
 
+  return true;
+}
+
+bool BufferBindingsGLES::ReadStorageBlockBindings(const ProcTableGLES& gl,
+                                                  GLuint program) {
+  if (!gl.GetProgramInterfaceiv.IsAvailable()) {
+    return true;
+  }
+  GLint block_count = 0;
+  gl.GetProgramInterfaceiv(program, GL_SHADER_STORAGE_BLOCK,
+                           GL_ACTIVE_RESOURCES, &block_count);
+  GLint max_name_length = 0;
+  gl.GetProgramInterfaceiv(program, GL_SHADER_STORAGE_BLOCK, GL_MAX_NAME_LENGTH,
+                           &max_name_length);
+  std::vector<GLchar> name(std::max<GLint>(max_name_length, 1));
+  for (GLint i = 0; i < block_count; i++) {
+    GLsizei length = 0;
+    gl.GetProgramResourceName(program, GL_SHADER_STORAGE_BLOCK, i,
+                              static_cast<GLsizei>(name.size()), &length,
+                              name.data());
+    if (length <= 0) {
+      VALIDATION_LOG << "Could not read the name of a shader storage block.";
+      return false;
+    }
+    const GLenum property = GL_BUFFER_BINDING;
+    GLint binding = 0;
+    gl.GetProgramResourceiv(program, GL_SHADER_STORAGE_BLOCK, i, 1, &property,
+                            1, nullptr, &binding);
+    storage_block_bindings_[NormalizeUniformKey(
+        std::string{name.data(), static_cast<size_t>(length)})] =
+        static_cast<GLuint>(binding);
+  }
+  return true;
+}
+
+bool BufferBindingsGLES::BindComputeUniformData(
+    const ProcTableGLES& gl,
+    const std::vector<TextureAndSampler>& bound_textures,
+    const std::vector<BufferResource>& bound_buffers,
+    SamplerStateCache* sampler_cache) {
+  for (const BufferResource& buffer : bound_buffers) {
+    if (!BindUniformBuffer(gl, buffer)) {
+      return false;
+    }
+  }
+  return BindTextures(gl, bound_textures, Range{0, bound_textures.size()},
+                      ShaderStage::kCompute,
+                      /*unit_start_index=*/0, sampler_cache)
+      .has_value();
+}
+
+bool BufferBindingsGLES::BindStorageBuffer(const ProcTableGLES& gl,
+                                           const BufferResource& buffer) {
+  const ShaderMetadata* metadata = buffer.GetMetadata();
+  const DeviceBuffer* device_buffer = buffer.resource.GetBuffer();
+  if (!metadata || !device_buffer) {
+    VALIDATION_LOG << "Storage buffer binding has no metadata or buffer.";
+    return false;
+  }
+  auto found =
+      storage_block_bindings_.find(NormalizeUniformKey(metadata->name));
+  if (found == storage_block_bindings_.end()) {
+    // The driver removed the block because the shader never uses it.
+    return true;
+  }
+  const DeviceBufferGLES& device_buffer_gles =
+      DeviceBufferGLES::Cast(*device_buffer);
+  if (!device_buffer_gles.BindAndUploadDataIfNecessary(
+          DeviceBufferGLES::BindingType::kShaderStorageBuffer)) {
+    return false;
+  }
+  std::optional<GLuint> handle = device_buffer_gles.GetHandle();
+  if (!handle.has_value()) {
+    return false;
+  }
+  const Range range = buffer.resource.GetRange();
+  if (range.length == 0) {
+    VALIDATION_LOG << "Cannot bind an empty storage buffer range.";
+    return false;
+  }
+  gl.BindBufferRange(GL_SHADER_STORAGE_BUFFER, found->second, handle.value(),
+                     range.offset, range.length);
+  // The shader may write it. Storage access is not reflected per binding
+  // here, so every storage binding is treated as written.
+  device_buffer_gles.MarkWrittenByGPU();
   return true;
 }
 
