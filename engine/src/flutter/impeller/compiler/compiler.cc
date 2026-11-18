@@ -210,6 +210,15 @@ static CompilerBackend CreateVulkanCompiler(
   return CompilerBackend(gl_compiler);
 }
 
+// Whether the shader declares storage buffers or storage images, which need
+// GLSL ES 3.10 or GLSL 4.30. Read from the SPIR-V before any GLSL is emitted.
+static bool UsesStorageResources(const spirv_cross::CompilerGLSL& compiler) {
+  const spirv_cross::ShaderResources resources =
+      compiler.get_shader_resources();
+  return !resources.storage_buffers.empty() ||
+         !resources.storage_images.empty();
+}
+
 static CompilerBackend CreateGLSLCompiler(const spirv_cross::ParsedIR& ir,
                                           const SourceOptions& source_options) {
   std::shared_ptr<spirv_cross::CompilerGLSL> gl_compiler =
@@ -255,6 +264,12 @@ static CompilerBackend CreateGLSLCompiler(const spirv_cross::ParsedIR& ir,
                sl_options.version < 300) {
       sl_options.version = 300;
     }
+    // Storage buffers and images need GLSL ES 3.10 in every stage. Promote
+    // only the shaders that use them, so the rest still run on OpenGL ES 2.0
+    // and 3.0, and so SPIRV-Cross does not fail on them at a lower version.
+    if (UsesStorageResources(*gl_compiler) && sl_options.version < 310) {
+      sl_options.version = 310;
+    }
     sl_options.es = true;
     if (source_options.require_framebuffer_fetch &&
         source_options.type == SourceType::kFragmentShader) {
@@ -271,7 +286,8 @@ static CompilerBackend CreateGLSLCompiler(const spirv_cross::ParsedIR& ir,
     sl_options.version = source_options.gles_language_version > 0
                              ? source_options.gles_language_version
                              : 120;
-    if (source_options.type == SourceType::kComputeShader &&
+    if ((source_options.type == SourceType::kComputeShader ||
+         UsesStorageResources(*gl_compiler)) &&
         sl_options.version < 430) {
       sl_options.version = 430;
     }

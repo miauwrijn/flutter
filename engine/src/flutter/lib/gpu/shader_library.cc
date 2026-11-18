@@ -476,25 +476,28 @@ static ShaderLibrary::ShaderMap ParseShaderBundle(
     std::vector<impeller::ShaderStageBufferLayout> layouts;
     if (backend_shader->stage() ==
         impeller::fb::shaderbundle::ShaderStage::kVertex) {
+      // A vertex shader that reads its data from storage buffers has no
+      // vertex inputs, and the bundle then omits the list.
       auto inputs_fb = backend_shader->inputs();
-
-      inputs.reserve(inputs_fb->size());
       size_t default_stride = 0;
-      for (const auto& input : *inputs_fb) {
-        impeller::ShaderStageIOSlot slot{};
-        slot.name = input->name()->c_str();
-        slot.location = input->location();
-        slot.set = input->set();
-        slot.binding = input->binding();
-        slot.type = FromInputType(input->type());
-        slot.bit_width = input->bit_width();
-        slot.vec_size = input->vec_size();
-        slot.columns = input->columns();
-        slot.offset = input->offset();
-        inputs.emplace_back(slot);
+      if (inputs_fb != nullptr) {
+        inputs.reserve(inputs_fb->size());
+        for (const auto& input : *inputs_fb) {
+          impeller::ShaderStageIOSlot slot{};
+          slot.name = input->name()->c_str();
+          slot.location = input->location();
+          slot.set = input->set();
+          slot.binding = input->binding();
+          slot.type = FromInputType(input->type());
+          slot.bit_width = input->bit_width();
+          slot.vec_size = input->vec_size();
+          slot.columns = input->columns();
+          slot.offset = input->offset();
+          inputs.emplace_back(slot);
 
-        default_stride +=
-            SizeOfInputType(input->type()) * slot.vec_size * slot.columns;
+          default_stride +=
+              SizeOfInputType(input->type()) * slot.vec_size * slot.columns;
+        }
       }
       layouts = {impeller::ShaderStageBufferLayout{
           .stride = default_stride,
@@ -509,6 +512,7 @@ static ShaderLibrary::ShaderMap ParseShaderBundle(
         std::move(uniform_textures), std::move(descriptor_set_layouts),
         std::move(storage_buffers), workgroup_size,
         std::move(storage_textures));
+    shader->SetGLSLVersion(backend_shader->glsl_version());
     shader_map[bundled_shader->name()->str()] = std::move(shader);
   }
 
@@ -747,10 +751,19 @@ Dart_Handle InternalFlutterGpu_ShaderLibrary_GetShader(
     Dart_Handle shader_name,
     Dart_Handle shader_wrapper) {
   FML_DCHECK(Dart_IsString(shader_name));
-  auto shader =
-      wrapper->GetShader(tonic::StdStringFromDart(shader_name), shader_wrapper);
+  const std::string name = tonic::StdStringFromDart(shader_name);
+  auto shader = wrapper->GetShader(name, shader_wrapper);
   if (!shader) {
     return Dart_Null();
+  }
+  // A shader the bundle contains but this device cannot run is reported by
+  // name, rather than failing later when a pipeline is built from it.
+  std::optional<std::string> out_error;
+  if (auto context = flutter::gpu::Context::GetDefaultContext(out_error)) {
+    if (std::optional<std::string> reason =
+            flutter::gpu::CheckShaderRunsOnContext(*shader, name, *context)) {
+      return tonic::ToDart(reason.value());
+    }
   }
   return tonic::ToDart(shader.get());
 }

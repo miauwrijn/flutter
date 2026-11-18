@@ -462,6 +462,12 @@ const std::vector<GLint>& BufferBindingsGLES::ComputeUniformLocations(
 bool BufferBindingsGLES::BindUniformBuffer(const ProcTableGLES& gl,
                                            const BufferResource& buffer) {
   const ShaderMetadata* metadata = buffer.GetMetadata();
+  // Render passes hand storage buffers over with the uniform buffers, so
+  // recognize them by the storage block they name.
+  if (metadata &&
+      storage_block_bindings_.contains(NormalizeUniformKey(metadata->name))) {
+    return BindStorageBuffer(gl, buffer);
+  }
   const DeviceBuffer* device_buffer = buffer.resource.GetBuffer();
   if (!device_buffer) {
     VALIDATION_LOG << "Device buffer not found.";

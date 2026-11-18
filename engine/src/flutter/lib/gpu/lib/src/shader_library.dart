@@ -76,16 +76,32 @@ base class ShaderLibrary extends NativeFieldWrapperClass1 {
   // destroyed.
   final Map<String, Shader?> shaders_ = {};
 
+  /// Returns the shader named [shaderName], or null if the library contains
+  /// no shader with that name.
+  ///
+  /// Throws an [UnsupportedError] if the library contains the shader but
+  /// this device cannot run it, naming the shader, the version of the
+  /// graphics API it needs and the version the device has. On OpenGL ES, a
+  /// shader that uses storage buffers or storage textures needs OpenGL ES
+  /// 3.1, and vertex and fragment shaders are limited in how many storage
+  /// resources they can declare.
   Shader? operator [](String shaderName) {
     // This `flutter_gpu` library isn't always registered as part of the
     // builtin DartClassLibrary, and so we can't instantiate the Dart classes
     // on the engine side. Providing a new wrapper to [_getShader] for
     // wrapping the native counterpart (if it hasn't been wrapped already)
     // is a hack to work around this.
-    return shaders_.putIfAbsent(
-      shaderName,
-      () => _getShader(shaderName, Shader._()),
-    );
+    if (shaders_.containsKey(shaderName)) {
+      return shaders_[shaderName];
+    }
+    final Object? result = _getShader(shaderName, Shader._());
+    if (result is String) {
+      // The library contains the shader, but this device cannot run it.
+      throw UnsupportedError(result);
+    }
+    final shader = result as Shader?;
+    shaders_[shaderName] = shader;
+    return shader;
   }
 
   /// Re-fetches `assetKey` through the asset manager and reparses it into
@@ -166,5 +182,7 @@ base class ShaderLibrary extends NativeFieldWrapperClass1 {
   @Native<Handle Function(Pointer<Void>, Handle, Handle)>(
     symbol: 'InternalFlutterGpu_ShaderLibrary_GetShader',
   )
-  external Shader? _getShader(String shaderName, Shader shaderWrapper);
+  /// Returns the shader, null if the library has none named [shaderName],
+  /// or a String saying why this device cannot run it.
+  external Object? _getShader(String shaderName, Shader shaderWrapper);
 }

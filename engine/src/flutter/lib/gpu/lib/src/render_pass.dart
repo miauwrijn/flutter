@@ -569,6 +569,48 @@ base class RenderPass extends NativeFieldWrapperClass1
     }
   }
 
+  /// Binds [bufferView] to the storage buffer [slot] of the bound
+  /// pipeline's vertex or fragment shader, for subsequent draws.
+  ///
+  /// A vertex shader can, for example, read per-instance data that a
+  /// [ComputePass] wrote, without a vertex buffer layout. Writes by earlier
+  /// passes are visible to the draw.
+  ///
+  /// The view is checked like [ComputePass.bindStorageBuffer] checks it.
+  /// Storage buffers need [GpuContext.supportsCompute]; on OpenGL ES a
+  /// shader that declares them needs OpenGL ES 3.1, and devices may allow
+  /// vertex and fragment shaders none (see [ShaderLibrary.operator []]).
+  void bindStorageBuffer(StorageBufferSlot slot, BufferView bufferView) {
+    _checkNotEnded();
+    final int storageBufferIndex = slot._validateView(
+      bufferView,
+      gpuContext.minimumStorageBufferByteAlignment,
+    );
+    if (!_bindStorageBufferIndexed(
+      slot.shader,
+      storageBufferIndex,
+      bufferView.buffer,
+      bufferView.offsetInBytes,
+      bufferView.lengthInBytes,
+    )) {
+      throw Exception(
+        "Failed to bind storage buffer '${slot.storageBufferName}'. Only "
+        'vertex and fragment shaders take storage buffers in a RenderPass.',
+      );
+    }
+  }
+
+  @Native<
+    Bool Function(Pointer<Void>, Pointer<Void>, Int, Pointer<Void>, Int, Int)
+  >(symbol: 'InternalFlutterGpu_RenderPass_BindStorageBufferIndexed')
+  external bool _bindStorageBufferIndexed(
+    Shader shader,
+    int storageBufferIndex,
+    DeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes,
+  );
+
   void bindTexture(
     UniformSlot slot,
     Texture texture, {

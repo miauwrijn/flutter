@@ -4250,4 +4250,89 @@ void main() async {
     await submitAndWait(commandBuffer);
     expect(texture, isNotNull);
   }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('A vertex shader reads positions a compute pass wrote from a storage buffer', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ShaderLibrary library = (await gpu.ShaderLibrary.fromAsset(
+      'test_storage.shaderbundle',
+    ))!;
+    final gpu.Shader vertexShader = library['StorageVertices']!;
+    final gpu.RenderPipeline pipeline = gpu.gpuContext.createRenderPipeline(
+      vertexShader,
+      library['UnlitFragment']!,
+    );
+    final gpu.StorageBufferSlot positions = vertexShader.getStorageBufferSlot('Positions');
+    expect(positions.runtimeArrayStrideInBytes, 8);
+
+    final gpu.ComputePipeline triangle = await createComputePipeline('ComputeTriangle');
+    final gpu.DeviceBuffer vertices = createTriangleVertexBuffer();
+    final gpu.CommandBuffer commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final gpu.ComputePass computePass = commandBuffer.createComputePass();
+    computePass.bindPipeline(triangle);
+    computePass.bindUniform(
+      triangle.shader.getUniformSlot('TriangleInfo'),
+      gpu.gpuContext.createHostBuffer().emplace(triangleInfo(1)),
+    );
+    computePass.bindStorageBuffer(
+      triangle.shader.getStorageBufferSlot('Vertices'),
+      wholeBuffer(vertices),
+    );
+    computePass.dispatch(1);
+
+    final gpu.Texture texture = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      100,
+      100,
+    );
+    final gpu.RenderPass renderPass = commandBuffer.createRenderPass(
+      gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: texture, clearValue: Colors.red)),
+    );
+    renderPass.bindPipeline(pipeline);
+    renderPass.bindStorageBuffer(positions, wholeBuffer(vertices));
+    renderPass.bindUniform(
+      vertexShader.getUniformSlot('VertInfo'),
+      gpu.gpuContext.createHostBuffer().emplace(unlitUBO(Matrix4.identity(), Colors.lime)),
+    );
+    renderPass.draw(3);
+    await submitAndWait(commandBuffer);
+
+    await expectTriangleCoversViewport(texture, covers: true);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
+
+  test('RenderPass.bindStorageBuffer validates the view and the stage', () async {
+    if (skipUnlessComputeIsSupported()) {
+      return;
+    }
+    final gpu.ShaderLibrary library = (await gpu.ShaderLibrary.fromAsset(
+      'test_storage.shaderbundle',
+    ))!;
+    final gpu.StorageBufferSlot positions = library['StorageVertices']!.getStorageBufferSlot(
+      'Positions',
+    );
+    final gpu.Shader compute = await getComputeShader('ComputeScale');
+    final RenderPassState state = createSimpleRenderPass();
+    final gpu.DeviceBuffer buffer = gpu.gpuContext.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      64,
+    );
+    // A partial array element.
+    expect(
+      () => state.renderPass.bindStorageBuffer(
+        positions,
+        gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: 12),
+      ),
+      throwsArgumentError,
+    );
+    // A compute shader's storage buffer.
+    expect(
+      () => state.renderPass.bindStorageBuffer(
+        compute.getStorageBufferSlot('Vertices'),
+        wholeBuffer(createTriangleVertexBuffer()),
+      ),
+      throwsException,
+    );
+    await submitAndWait(state.commandBuffer);
+  }, skip: !(impellerEnabled && flutterGpuEnabled));
 }

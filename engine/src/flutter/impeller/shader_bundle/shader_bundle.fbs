@@ -173,6 +173,11 @@ table BackendShader {
   workgroup_size: WorkgroupSize;
   // The storage textures a compute shader declares. Empty for other stages.
   storage_textures: [ShaderStorageTexture];
+  // The GLSL version an OpenGL ES or desktop OpenGL variant is compiled to,
+  // such as 100, 300 or 310 for OpenGL ES. Each shader gets the lowest
+  // version its features allow: storage buffers and images need 310 on
+  // OpenGL ES and 430 on desktop OpenGL. Zero for other backends.
+  glsl_version: uint32;
 }
 
 table Shader {

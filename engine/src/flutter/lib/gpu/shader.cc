@@ -121,6 +121,7 @@ void Shader::ResetFrom(Shader& other) {
   storage_buffers_ = std::move(other.storage_buffers_);
   storage_textures_ = std::move(other.storage_textures_);
   workgroup_size_ = other.workgroup_size_;
+  glsl_version_ = other.glsl_version_;
   RebuildBindingOrder();
   if (code_changed) {
     is_dirty_ = true;
@@ -308,6 +309,18 @@ void Shader::RebuildBindingOrder() {
   for (const auto& entry : storage_textures_) {
     storage_texture_order_.push_back(&entry.second);
   }
+}
+
+uint32_t Shader::GetGLSLVersion() const {
+  return glsl_version_;
+}
+
+void Shader::SetGLSLVersion(uint32_t version) {
+  glsl_version_ = version;
+}
+
+size_t Shader::GetStorageResourceCount() const {
+  return storage_buffers_.size() + storage_textures_.size();
 }
 
 const Shader::StorageTextureBinding* Shader::GetStorageTexture(

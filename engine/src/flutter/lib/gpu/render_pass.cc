@@ -174,6 +174,8 @@ void RenderPass::ClearBindings() {
   vertex_texture_bindings.clear();
   fragment_uniform_bindings.clear();
   fragment_texture_bindings.clear();
+  vertex_storage_bindings.clear();
+  fragment_storage_bindings.clear();
   for (auto& set : binding_sets) {
     set = nullptr;
   }
@@ -365,6 +367,17 @@ bool RenderPass::Draw(size_t element_count,
         std::make_unique<impeller::ShaderMetadata>(
             *texture.texture.GetMetadata()),
         texture.texture.resource, texture.sampler);
+  }
+
+  for (const auto& [binding, view] : vertex_storage_bindings) {
+    render_pass_->BindResource(impeller::ShaderStage::kVertex,
+                               impeller::DescriptorType::kStorageBuffer,
+                               binding->slot, &binding->metadata, view);
+  }
+  for (const auto& [binding, view] : fragment_storage_bindings) {
+    render_pass_->BindResource(impeller::ShaderStage::kFragment,
+                               impeller::DescriptorType::kStorageBuffer,
+                               binding->slot, &binding->metadata, view);
   }
 
   render_pass_->SetVertexBuffer(vertex_buffers.data(), vertex_buffer_count);
@@ -668,6 +681,42 @@ bool InternalFlutterGpu_RenderPass_BindUniformDeviceIndexed(
   return BindUniformStruct(
       wrapper, shader, shader->GetUniformStructAt(uniform_struct_index),
       device_buffer->GetBuffer(), offset_in_bytes, length_in_bytes);
+}
+
+bool InternalFlutterGpu_RenderPass_BindStorageBufferIndexed(
+    flutter::gpu::RenderPass* wrapper,
+    flutter::gpu::Shader* shader,
+    int storage_buffer_index,
+    flutter::gpu::DeviceBuffer* device_buffer,
+    int offset_in_bytes,
+    int length_in_bytes) {
+  const flutter::gpu::Shader::StorageBufferBinding* binding =
+      shader->GetStorageBufferAt(storage_buffer_index);
+  if (!binding || offset_in_bytes < 0 || length_in_bytes <= 0) {
+    return false;
+  }
+  flutter::gpu::RenderPass::StorageBufferMap* map = nullptr;
+  switch (shader->GetShaderStage()) {
+    case impeller::ShaderStage::kVertex:
+      map = &wrapper->vertex_storage_bindings;
+      break;
+    case impeller::ShaderStage::kFragment:
+      map = &wrapper->fragment_storage_bindings;
+      break;
+    case impeller::ShaderStage::kUnknown:
+    case impeller::ShaderStage::kCompute:
+      return false;
+  }
+  std::shared_ptr<const impeller::DeviceBuffer> buffer =
+      device_buffer->GetBuffer();
+  if (!buffer || static_cast<size_t>(offset_in_bytes + length_in_bytes) >
+                     buffer->GetDeviceBufferDescriptor().size) {
+    return false;
+  }
+  map->insert_or_assign(
+      binding, impeller::BufferView(
+                   buffer, impeller::Range(offset_in_bytes, length_in_bytes)));
+  return true;
 }
 
 static bool BindTextureBinding(

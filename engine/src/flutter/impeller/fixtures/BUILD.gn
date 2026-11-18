@@ -156,6 +156,7 @@ test_fixtures("file_fixtures") {
     "flutter_gpu_compute_storage_texture.comp",
     "flutter_gpu_compute_storage_texture_cube.comp",
     "flutter_gpu_compute_storage_texture_rw.comp",
+    "flutter_gpu_storage_vertices.vert",
     "flutter_gpu_instanced.frag",
     "flutter_gpu_instanced.vert",
     "flutter_gpu_texture.frag",

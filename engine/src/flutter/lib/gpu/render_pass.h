@@ -126,6 +126,14 @@ class RenderPass : public RefCountedDartWrappable<RenderPass> {
   BufferUniformMap fragment_uniform_bindings;
   TextureUniformMap fragment_texture_bindings;
 
+  /// Storage buffers bound to the vertex and fragment shaders, which read
+  /// them (and may write them) like a compute shader does.
+  using StorageBufferMap =
+      std::unordered_map<const flutter::gpu::Shader::StorageBufferBinding*,
+                         impeller::BufferView>;
+  StorageBufferMap vertex_storage_bindings;
+  StorageBufferMap fragment_storage_bindings;
+
   // Binding sets replayed by every draw, in slot order. Individual binds are
   // replayed after these, so a bind that collides with a set member wins.
   std::array<fml::RefPtr<BindingSet>, kMaxBindingSets> binding_sets;
@@ -400,6 +408,15 @@ extern bool InternalFlutterGpu_RenderPass_Draw(
     flutter::gpu::RenderPass* wrapper,
     int vertex_count,
     int instance_count);
+
+FLUTTER_GPU_EXPORT
+extern bool InternalFlutterGpu_RenderPass_BindStorageBufferIndexed(
+    flutter::gpu::RenderPass* wrapper,
+    flutter::gpu::Shader* shader,
+    int storage_buffer_index,
+    flutter::gpu::DeviceBuffer* device_buffer,
+    int offset_in_bytes,
+    int length_in_bytes);
 
 /// Returns null on success, or the reason the draw failed.
 FLUTTER_GPU_EXPORT

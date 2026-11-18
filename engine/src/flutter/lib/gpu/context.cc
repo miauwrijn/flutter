@@ -11,12 +11,14 @@
 #include <future>
 
 #include "flutter/lib/gpu/formats.h"
+#include "flutter/lib/gpu/shader.h"
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "fml/make_copyable.h"
 #include "impeller/core/allocator.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/texture_descriptor.h"
 #include "impeller/renderer/context.h"
+#include "third_party/abseil-cpp/absl/strings/str_cat.h"
 #include "tonic/converter/dart_converter.h"
 
 namespace flutter {
@@ -49,6 +51,43 @@ bool IsDesktopGL(const impeller::Context& context) {
   }
 #endif  // IMPELLER_ENABLE_OPENGLES
   return false;
+}
+
+std::optional<std::string> CheckShaderRunsOnContext(
+    const Shader& shader,
+    const std::string& name,
+    const impeller::Context& context) {
+#if IMPELLER_ENABLE_OPENGLES
+  if (context.GetBackendType() != impeller::Context::BackendType::kOpenGLES) {
+    return std::nullopt;
+  }
+  const auto& capabilities = static_cast<const impeller::CapabilitiesGLES&>(
+      *context.GetCapabilities());
+  const impeller::Version& version = capabilities.GetGLVersion();
+  const std::string api = capabilities.IsES() ? "OpenGL ES" : "OpenGL";
+  const uint32_t device_glsl_version = static_cast<uint32_t>(
+      version.major_version * 100 + version.minor_version * 10);
+  const uint32_t shader_glsl_version = shader.GetGLSLVersion();
+  if (shader_glsl_version > device_glsl_version) {
+    return absl::StrCat(
+        "The shader '", name, "' needs ", api, " ", shader_glsl_version / 100,
+        ".", (shader_glsl_version / 10) % 10,
+        " for the features it uses, but this device has ", api, " ",
+        version.major_version, ".", version.minor_version, ".");
+  }
+  // OpenGL ES 3.1 allows vertex and fragment shaders no storage blocks.
+  const size_t storage_limit =
+      capabilities.GetMaxShaderStorageBlocks(shader.GetShaderStage());
+  if (shader.GetStorageResourceCount() > 0 &&
+      shader.GetStorageResourceCount() > storage_limit &&
+      shader.GetShaderStage() != impeller::ShaderStage::kCompute) {
+    return absl::StrCat("The shader '", name, "' declares ",
+                        shader.GetStorageResourceCount(),
+                        " storage resources, but this device allows ",
+                        storage_limit, " in its stage.");
+  }
+#endif  // IMPELLER_ENABLE_OPENGLES
+  return std::nullopt;
 }
 
 IMPLEMENT_WRAPPERTYPEINFO(flutter_gpu, Context);

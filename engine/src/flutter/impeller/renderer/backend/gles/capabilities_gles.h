@@ -9,6 +9,7 @@
 #include <cstddef>
 
 #include "impeller/base/backend_cast.h"
+#include "impeller/base/version.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/shader_types.h"
 #include "impeller/geometry/size.h"
@@ -217,8 +218,12 @@ class CapabilitiesGLES final
   /// The maximum number of storage blocks a shader of [stage] can declare.
   size_t GetMaxShaderStorageBlocks(ShaderStage stage) const;
 
+  /// The OpenGL or OpenGL ES version of the context.
+  const Version& GetGLVersion() const;
+
  private:
   bool supports_compute_ = false;
+  Version gl_version_;
   ComputeLimits compute_limits_;
   size_t storage_buffer_offset_alignment_ = 256;
   bool supports_texture_to_texture_blits_ = false;

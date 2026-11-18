@@ -6,6 +6,8 @@
 #define FLUTTER_LIB_GPU_CONTEXT_H_
 
 #include <cstdint>
+#include <optional>
+#include <string>
 
 #include "dart_api.h"
 #include "flutter/lib/gpu/export.h"
@@ -27,6 +29,17 @@ bool SupportsCompute(const impeller::Context& context);
 /// opposed to OpenGL ES or ANGLE. Shader bundles carry a separate variant for
 /// it.
 bool IsDesktopGL(const impeller::Context& context);
+
+class Shader;
+
+/// Why [context] cannot run [shader], named [name] in its bundle, or
+/// std::nullopt if it can. On OpenGL, names the GLSL version the shader
+/// needs and the version the context has, or the storage resource limit of
+/// the shader's stage it exceeds.
+std::optional<std::string> CheckShaderRunsOnContext(
+    const Shader& shader,
+    const std::string& name,
+    const impeller::Context& context);
 
 class Context : public RefCountedDartWrappable<Context> {
   DEFINE_WRAPPERTYPEINFO();

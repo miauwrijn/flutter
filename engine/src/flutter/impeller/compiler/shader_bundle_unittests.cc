@@ -519,6 +519,73 @@ TEST(ShaderBundleTest, RejectsUnsupportedStorageTextureTypes) {
           .has_value());
 }
 
+// Builds a bundle of the given (name, type, fixture) entries.
+static std::optional<fb::shaderbundle::ShaderBundleT> GenerateBundle(
+    const std::vector<std::tuple<std::string, std::string, std::string>>&
+        entries) {
+  std::string config = "{";
+  for (const auto& [name, type, fixture] : entries) {
+    if (config.size() > 1) {
+      config += ", ";
+    }
+    config += "\"" + name + "\": {\"type\": \"" + type + "\", \"file\": \"" +
+              std::string(flutter::testing::GetFixturesPath()) + "/" + fixture +
+              "\"}";
+  }
+  config += "}";
+  SourceOptions options;
+  options.target_platform = TargetPlatform::kRuntimeStageMetal;
+  options.source_language = SourceLanguage::kGLSL;
+  return GenerateShaderBundleFlatbuffer(config, options);
+}
+
+TEST(ShaderBundleTest, RenderShadersKeepTheirGLSLVersionWithoutStorage) {
+  std::optional<fb::shaderbundle::ShaderBundleT> bundle = GenerateBundle({
+      {"Vertex", "vertex", "flutter_gpu_unlit.vert"},
+      {"Fragment", "fragment", "flutter_gpu_unlit.frag"},
+  });
+  ASSERT_TRUE(bundle.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  for (const auto& shader : bundle->shaders) {
+    EXPECT_EQ(shader->opengl_es->glsl_version, 100u) << shader->name;
+    // Recorded, and not promoted to the storage version.
+    EXPECT_GT(shader->opengl_desktop->glsl_version, 0u) << shader->name;
+    EXPECT_LT(shader->opengl_desktop->glsl_version, 430u) << shader->name;
+    EXPECT_EQ(shader->metal_desktop->glsl_version, 0u) << shader->name;
+    EXPECT_EQ(shader->vulkan->glsl_version, 0u) << shader->name;
+  }
+}
+
+TEST(ShaderBundleTest, StorageInARenderStageCompilesTheBundleToGLSLES310) {
+  std::optional<fb::shaderbundle::ShaderBundleT> bundle = GenerateBundle({
+      {"StorageVertex", "vertex", "flutter_gpu_storage_vertices.vert"},
+      {"Fragment", "fragment", "flutter_gpu_unlit.frag"},
+      {"Compute", "compute", "flutter_gpu_compute.comp"},
+  });
+  ASSERT_TRUE(bundle.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const auto* storage_vertex = FindByName(bundle->shaders, "StorageVertex");
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const auto* fragment = FindByName(bundle->shaders, "Fragment");
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const auto* compute = FindByName(bundle->shaders, "Compute");
+  ASSERT_NE(storage_vertex, nullptr);
+  ASSERT_NE(fragment, nullptr);
+  ASSERT_NE(compute, nullptr);
+
+  // The vertex shader declares a storage buffer, reflected like a compute
+  // shader's.
+  ASSERT_EQ(storage_vertex->vulkan->storage_buffers.size(), 1u);
+  EXPECT_EQ(storage_vertex->vulkan->storage_buffers.front()->access,
+            fb::shaderbundle::ShaderResourceAccess::kReadOnly);
+  EXPECT_EQ(storage_vertex->opengl_es->glsl_version, 310u);
+  EXPECT_EQ(storage_vertex->opengl_desktop->glsl_version, 430u);
+  // OpenGL ES links only shaders of one version, so the fragment shader it
+  // may be paired with is promoted too.
+  EXPECT_EQ(fragment->opengl_es->glsl_version, 310u);
+  EXPECT_EQ(compute->opengl_es->glsl_version, 310u);
+}
+
 TEST(ShaderBundleTest, RejectsComputeShaderWithSpecializedWorkgroupSize) {
   EXPECT_FALSE(
       GenerateComputeBundle("flutter_gpu_compute_specialized_size.comp")

@@ -215,6 +215,7 @@ CapabilitiesGLES::CapabilitiesGLES(const ProcTableGLES& gl) {
     supports_offscreen_msaa_ = value >= 4;
   }
   is_es_ = desc->IsES();
+  gl_version_ = desc->GetGlVersion();
   is_angle_ = desc->IsANGLE();
   needs_texture_upload_rebind_ =
       is_es_ && !is_angle_ &&
@@ -381,6 +382,10 @@ size_t CapabilitiesGLES::GetMaxTextureUnits(ShaderStage stage) const {
       return 0u;
   }
   FML_UNREACHABLE();
+}
+
+const Version& CapabilitiesGLES::GetGLVersion() const {
+  return gl_version_;
 }
 
 size_t CapabilitiesGLES::GetMaxShaderStorageBlocks(ShaderStage stage) const {

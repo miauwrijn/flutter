@@ -4,8 +4,10 @@
 
 #include "impeller/compiler/shader_bundle.h"
 
+#include <cctype>
 #include <filesystem>
 #include <sstream>
+#include <string_view>
 
 #include "flutter/fml/file.h"
 #include "flutter/fml/mapping.h"
@@ -111,6 +113,22 @@ std::vector<std::string_view> GetShaderBundleTargetPlatformDefines(
   return {};
 }
 
+// Reads N from the `#version N` directive that begins GLSL source, or 0.
+static uint32_t ParseGLSLVersion(const std::vector<uint8_t>& source) {
+  constexpr std::string_view kVersion = "#version ";
+  const std::string_view code(reinterpret_cast<const char*>(source.data()),
+                              source.size());
+  if (code.substr(0, kVersion.size()) != kVersion) {
+    return 0;
+  }
+  uint32_t version = 0;
+  for (size_t i = kVersion.size(); i < code.size() && std::isdigit(code[i]);
+       i++) {
+    version = version * 10 + static_cast<uint32_t>(code[i] - '0');
+  }
+  return version;
+}
+
 static std::unique_ptr<fb::shaderbundle::BackendShaderT>
 GenerateShaderBackendFB(TargetPlatform target_platform,
                         SourceOptions& options,
@@ -212,6 +230,13 @@ GenerateShaderBackendFB(TargetPlatform target_platform,
     return nullptr;
   }
 
+  // Record the GLSL version the OpenGL variants were compiled to, so the
+  // runtime can name the version a shader needs when the device lacks it.
+  if (target_platform == TargetPlatform::kOpenGLES ||
+      target_platform == TargetPlatform::kOpenGLDesktop) {
+    result->glsl_version = ParseGLSLVersion(result->shader);
+  }
+
   return result;
 }
 
@@ -284,6 +309,42 @@ std::optional<fb::shaderbundle::ShaderBundleT> GenerateShaderBundleFlatbuffer(
       return std::nullopt;
     }
     shader_bundle.shaders.push_back(std::move(shader));
+  }
+
+  // A render shader that uses storage buffers or images is compiled to GLSL
+  // ES 3.10. OpenGL ES only links vertex and fragment shaders of the same
+  // version, and which shaders a pipeline pairs is only known at runtime, so
+  // in a bundle with such a shader every render shader is compiled to 3.10,
+  // and needs OpenGL ES 3.1. Bundles without storage in render stages are
+  // unchanged, so keeping such shaders in their own bundle keeps the others
+  // running on older devices.
+  const auto is_render_stage = [](fb::shaderbundle::ShaderStage stage) {
+    return stage == fb::shaderbundle::ShaderStage::kVertex ||
+           stage == fb::shaderbundle::ShaderStage::kFragment;
+  };
+  bool render_stage_needs_gles_31 = false;
+  for (const auto& shader : shader_bundle.shaders) {
+    if (is_render_stage(shader->opengl_es->stage) &&
+        shader->opengl_es->glsl_version >= 310) {
+      render_stage_needs_gles_31 = true;
+    }
+  }
+  if (render_stage_needs_gles_31) {
+    for (auto& shader : shader_bundle.shaders) {
+      if (!is_render_stage(shader->opengl_es->stage) ||
+          shader->opengl_es->glsl_version >= 310) {
+        continue;
+      }
+      SourceOptions gles31_options = options;
+      gles31_options.gles_language_version = 310;
+      auto variant = GenerateShaderBackendFB(
+          TargetPlatform::kOpenGLES, gles31_options, shader->name,
+          bundle_config->at(shader->name), out_dependencies);
+      if (!variant) {
+        return std::nullopt;
+      }
+      shader->opengl_es = std::move(variant);
+    }
   }
 
   return shader_bundle;

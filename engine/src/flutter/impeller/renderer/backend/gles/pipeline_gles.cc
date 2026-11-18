@@ -53,6 +53,10 @@ bool PipelineGLES::BuildVertexDescriptor(const ProcTableGLES& gl,
   if (!vtx_desc->ReadUniformsBindings(gl, program)) {
     return false;
   }
+  // Vertex and fragment shaders may declare storage blocks on OpenGL ES 3.1.
+  if (!vtx_desc->ReadStorageBlockBindings(gl, program)) {
+    return false;
+  }
   // Cache the y-flip uniform; -1 if not declared.
   y_flip_uniform_location_ = gl.GetUniformLocation(program, "_impeller_y_flip");
   buffer_bindings_ = std::move(vtx_desc);

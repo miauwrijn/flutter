@@ -152,6 +152,16 @@ class Shader : public RefCountedDartWrappable<Shader> {
   const Shader::StorageBufferBinding* GetStorageBuffer(
       const std::string& name) const;
 
+  /// The GLSL version the OpenGL variant of this shader was compiled to, such
+  /// as 310 for OpenGL ES 3.1, or 0 when the bundle does not say or the
+  /// backend is not OpenGL.
+  uint32_t GetGLSLVersion() const;
+
+  void SetGLSLVersion(uint32_t version);
+
+  /// The number of storage buffers and storage textures the shader declares.
+  size_t GetStorageResourceCount() const;
+
   /// The workgroup size a compute shader declares, or std::nullopt for any
   /// other stage.
   const std::optional<std::array<uint32_t, 3>>& GetWorkgroupSize() const;
@@ -210,6 +220,7 @@ class Shader : public RefCountedDartWrappable<Shader> {
   absl::flat_hash_map<std::string, StorageBufferBinding> storage_buffers_;
   absl::flat_hash_map<std::string, StorageTextureBinding> storage_textures_;
   std::optional<std::array<uint32_t, 3>> workgroup_size_;
+  uint32_t glsl_version_ = 0;
   // The maps' entries in a stable order for index-based lookup. The maps are
   // never modified after they are set, only replaced (`Make`, `ResetFrom`),
   // so entry pointers stay valid until then, and the order is rebuilt
